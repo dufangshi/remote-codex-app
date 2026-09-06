@@ -1,0 +1,260 @@
+import SwiftUI
+import UIKit
+
+struct RcButton: View {
+    let label: String
+    var primary = true
+    var enabled = true
+    var identifier: String? = nil
+    let action: () -> Void
+
+    @Environment(\.rcColors) private var colors
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(minHeight: Rc.touch)
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity)
+                .foregroundStyle(primary ? colors.accentSolidFg : colors.fg)
+                .background(primary ? (enabled ? colors.accentSolid : colors.muted) : colors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: Rc.radius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Rc.radius, style: .continuous)
+                        .stroke(primary ? Color.clear : colors.border, lineWidth: 1)
+                )
+        }
+        .disabled(!enabled)
+        .accessibilityIdentifier(identifier ?? label)
+    }
+}
+
+struct HostedButton: UIViewRepresentable {
+    let title: String
+    let identifier: String
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        button.setTitleColor(.white, for: .normal)
+        button.backgroundColor = UIColor(red: 0.13, green: 0.77, blue: 0.37, alpha: 1)
+        button.layer.cornerRadius = 6
+        button.accessibilityIdentifier = identifier
+        button.accessibilityLabel = title
+        button.isAccessibilityElement = true
+        button.addTarget(context.coordinator, action: #selector(Coordinator.tapped), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ button: UIButton, context: Context) {
+        context.coordinator.action = action
+        button.setTitle(title, for: .normal)
+        button.accessibilityIdentifier = identifier
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIButton, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 320, height: 44)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func tapped() { action() }
+    }
+}
+
+struct RcField: View {
+    let label: String
+    @Binding var text: String
+    var placeholder = ""
+    var secure = false
+    var identifier: String? = nil
+
+    @Environment(\.rcColors) private var colors
+    @State private var visible = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(colors.fgSoft)
+            HStack {
+                Group {
+                    if secure && !visible {
+                        SecureField(placeholder, text: $text)
+                    } else {
+                        TextField(placeholder, text: $text)
+                    }
+                }
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textContentType(.none)
+                .foregroundStyle(colors.fg)
+                .accessibilityIdentifier(identifier ?? label)
+                .submitLabel(.done)
+                if secure {
+                    Button {
+                        visible.toggle()
+                    } label: {
+                        Image(systemName: visible ? "eye.slash" : "eye")
+                            .foregroundStyle(colors.fgMuted)
+                    }
+                    .accessibilityIdentifier(visible ? "Hide password" : "Show password")
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: Rc.touch)
+            .background(colors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: Rc.radius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Rc.radius, style: .continuous)
+                    .stroke(colors.border, lineWidth: 1)
+            )
+        }
+    }
+}
+
+struct NoticeView: View {
+    let text: String
+    var tone: Tone = .danger
+    @Environment(\.rcColors) private var colors
+
+    enum Tone { case danger, success, accent }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 14))
+            .foregroundStyle(fg)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(bg)
+            .clipShape(RoundedRectangle(cornerRadius: Rc.radius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Rc.radius, style: .continuous)
+                    .stroke(border, lineWidth: 1)
+            )
+            .accessibilityIdentifier("notice")
+    }
+
+    private var bg: Color {
+        switch tone {
+        case .danger: return colors.dangerBg
+        case .success: return colors.muted
+        case .accent: return colors.accentSoft
+        }
+    }
+    private var fg: Color {
+        switch tone {
+        case .danger: return colors.dangerFg
+        case .success: return colors.successFg
+        case .accent: return colors.accentStrong
+        }
+    }
+    private var border: Color {
+        switch tone {
+        case .danger: return colors.dangerBorder
+        case .success: return colors.border
+        case .accent: return colors.accentBorder
+        }
+    }
+}
+
+struct BrandMark: View {
+    @Environment(\.rcColors) private var colors
+    var body: some View {
+        Text("RC")
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(colors.accentStrong)
+            .frame(width: 36, height: 36)
+            .background(colors.accentSoft)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+struct ProductHeader: View {
+    let title: String
+    var backLabel: String? = nil
+    var onBack: (() -> Void)? = nil
+    var onOpenNav: (() -> Void)? = nil
+    var onOpenAccount: (() -> Void)? = nil
+    var accountLabel: String? = nil
+    var trailing: AnyView? = nil
+
+    @Environment(\.rcColors) private var colors
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                if let onOpenNav {
+                    headerIcon("line.3.horizontal", "Open Navigation", onOpenNav)
+                }
+                if let onBack {
+                    headerIcon("chevron.left", backLabel ?? "Back", onBack)
+                }
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(colors.fg)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .accessibilityIdentifier("pageTitle")
+                if let trailing { trailing }
+                if let onOpenAccount, let accountLabel, !accountLabel.isEmpty {
+                    Button(action: onOpenAccount) {
+                        Text(String(accountLabel.prefix(2)).uppercased())
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(colors.fg)
+                            .frame(width: 44, height: 44)
+                            .background(colors.surfaceStrong)
+                            .clipShape(Circle())
+                            .overlay(Circle().stroke(colors.border, lineWidth: 1))
+                    }
+                    .accessibilityIdentifier("accountMenuButton")
+                    .accessibilityLabel("Relay account menu for \(accountLabel)")
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(colors.appBg.opacity(0.94))
+            Rectangle().fill(colors.border).frame(height: 1)
+        }
+    }
+
+    private func headerIcon(_ system: String, _ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .foregroundStyle(colors.fg)
+                .frame(width: 44, height: 44)
+        }
+        .accessibilityIdentifier(label)
+        .accessibilityLabel(label)
+    }
+}
+
+struct StatusDot: View {
+    var online: Bool
+    @Environment(\.rcColors) private var colors
+    var body: some View {
+        Circle()
+            .fill(online ? colors.successFg : colors.fgMuted)
+            .frame(width: 10, height: 10)
+    }
+}
+
+private struct RcColorsKey: EnvironmentKey {
+    static let defaultValue = RcColors.dark
+}
+
+extension EnvironmentValues {
+    var rcColors: RcColors {
+        get { self[RcColorsKey.self] }
+        set { self[RcColorsKey.self] = newValue }
+    }
+}
