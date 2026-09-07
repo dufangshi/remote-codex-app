@@ -70,8 +70,53 @@ class AgentEventService : Service() {
                     delay(2_000)
                     continue
                 }
+                pollThreads(api, store, deviceId)
                 connect(api, store, deviceId)
                 delay(2_500)
+            }
+        }
+    }
+
+    private val knownStatus = mutableMapOf<String, String>()
+    private val notified = mutableSetOf<String>()
+    private var primed = false
+    private var primedDevice: String? = null
+
+    private suspend fun pollThreads(api: ApiClient, store: SessionStore, deviceId: String) {
+        if (primedDevice != deviceId) {
+            primed = false
+            knownStatus.clear()
+            notified.clear()
+            primedDevice = deviceId
+        }
+        val threads = runCatching { api.fetchThreads(deviceId) }.getOrDefault(emptyList())
+        if (!primed) {
+            threads.forEach {
+                knownStatus[it.id] = it.status
+                notified.add(it.id)
+            }
+            primed = true
+            return
+        }
+        for (thread in threads) {
+            val previous = knownStatus[thread.id]
+            knownStatus[thread.id] = thread.status
+            val finished = thread.status in setOf("idle", "failed", "interrupted", "system_error")
+            if (finished && !notified.contains(thread.id) && (previous == "running" || previous == null)) {
+                notified.add(thread.id)
+                val current = ActiveThreadTracker.current
+                if (current?.deviceId == deviceId && current.threadId == thread.id && RemoteCodexForeground.isForeground) {
+                    continue
+                }
+                val failed = thread.status == "failed"
+                Notifications.agentFinished(
+                    this,
+                    deviceId,
+                    thread.id,
+                    thread.title.ifBlank { "Thread" },
+                    if (failed) "Agent run failed." else "Agent run finished.",
+                    thread.id.hashCode(),
+                )
             }
         }
     }

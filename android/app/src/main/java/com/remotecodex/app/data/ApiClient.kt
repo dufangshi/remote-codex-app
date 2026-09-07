@@ -7,14 +7,17 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
+import kotlinx.serialization.json.jsonPrimitive
 
 class ApiClient(
     private val store: SessionStore,
@@ -25,7 +28,10 @@ class ApiClient(
         explicitNulls = false
     }
 
+    private val cookies = RelayCookieJar()
+
     private val http = OkHttpClient.Builder()
+        .cookieJar(cookies)
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
@@ -53,8 +59,79 @@ class ApiClient(
             ),
             authed = false,
         )
-        store.token = result.token
+        result.token?.takeIf { it.isNotBlank() }?.let { store.token = it }
         return result
+    }
+
+    suspend fun fetchLoginChallenge(): LoginChallenge =
+        request("/relay/auth/challenge", authed = false)
+
+    suspend fun verifyLoginCode(code: String, rememberBrowser: Boolean): RelayLoginResult {
+        val result: RelayLoginResult = request(
+            "/relay/auth/challenge",
+            method = "POST",
+            body = json.encodeToString(
+                buildJsonObject {
+                    put("code", code)
+                    put("rememberBrowser", rememberBrowser)
+                },
+            ),
+            authed = false,
+        )
+        result.token?.takeIf { it.isNotBlank() }?.let { store.token = it }
+        return result
+    }
+
+    suspend fun cancelLoginChallenge() {
+        runCatching { request<JsonObject>("/relay/auth/challenge", method = "DELETE", authed = false) }
+    }
+
+    suspend fun fetchSecurity(): SecurityStatus = request("/relay/account/security")
+
+    suspend fun enrollAuthenticator(): AuthenticatorEnrollment =
+        request("/relay/account/security/authenticator/enroll", method = "POST")
+
+    suspend fun confirmAuthenticator(code: String): RecoveryCodesResult = request(
+        "/relay/account/security/authenticator/confirm",
+        method = "POST",
+        body = json.encodeToString(buildJsonObject { put("code", code) }),
+    )
+
+    suspend fun disableAuthenticator() {
+        request<JsonObject>("/relay/account/security/authenticator", method = "DELETE")
+    }
+
+    suspend fun regenerateRecoveryCodes(): RecoveryCodesResult =
+        request("/relay/account/security/recovery-codes", method = "POST")
+
+    suspend fun revokeSecuritySession(id: String) {
+        request<JsonObject>("/relay/account/security/sessions/${enc(id)}", method = "DELETE")
+    }
+
+    suspend fun revokeTrustedBrowser(id: String) {
+        request<JsonObject>("/relay/account/security/browsers/${enc(id)}", method = "DELETE")
+    }
+
+    suspend fun fetchSetupToken(deviceId: String): SetupTokenResult = request(
+        "/relay/devices/${enc(deviceId)}/setup-token",
+        method = "POST",
+    )
+
+    suspend fun rotateDeviceToken(deviceId: String): RelayCreateDeviceResult = request(
+        "/relay/devices/${enc(deviceId)}/token",
+        method = "POST",
+    )
+
+    suspend fun revokeGrant(id: String) {
+        request<JsonObject>("/relay/grants/${enc(id)}", method = "DELETE")
+    }
+
+    suspend fun revokeShare(id: String) {
+        request<JsonObject>("/relay/shares/${enc(id)}", method = "DELETE")
+    }
+
+    fun clearCookies() {
+        cookies.clear()
     }
 
     suspend fun register(
@@ -87,6 +164,7 @@ class ApiClient(
             request<RelaySession>("/relay/auth/logout", method = "POST")
         }
         store.clearSession()
+        cookies.clear()
     }
 
     suspend fun fetchPortal(): RelayPortal = request("/relay/portal")
@@ -274,19 +352,30 @@ class ApiClient(
         if (authed && store.token.isNotBlank()) {
             builder.header("Authorization", "Bearer ${store.token}")
         }
-        http.newCall(builder.build()).execute().use { response ->
-            parse(response)
+        var wakeAttempt = 0
+        while (true) {
+            http.newCall(builder.build()).execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (response.isSuccessful) {
+                    return@withContext decodeBody(text)
+                }
+                val error = runCatching { json.decodeFromString<ApiErrorBody>(text) }.getOrElse {
+                    ApiErrorBody(message = text.ifBlank { "Request failed (${response.code})." })
+                }
+                val hostedStarting = response.code == 503 &&
+                    runCatching { error.details?.get("reason")?.jsonPrimitive?.content }.getOrNull() == "hosted_sandbox_starting"
+                if (!hostedStarting || wakeAttempt >= 60) {
+                    throw ApiException(response.code, error)
+                }
+            }
+            wakeAttempt += 1
+            Thread.sleep(1_500)
         }
+        @Suppress("UNCHECKED_CAST", "UNREACHABLE_CODE")
+        error("unreachable")
     }
 
-    private inline fun <reified T> parse(response: Response): T {
-        val text = response.body?.string().orEmpty()
-        if (!response.isSuccessful) {
-            val error = runCatching { json.decodeFromString<ApiErrorBody>(text) }.getOrElse {
-                ApiErrorBody(message = text.ifBlank { "Request failed (${response.code})." })
-            }
-            throw ApiException(response.code, error)
-        }
+    private inline fun <reified T> decodeBody(text: String): T {
         if (text.isBlank() || T::class == Unit::class) {
             @Suppress("UNCHECKED_CAST")
             return Unit as T
@@ -296,4 +385,25 @@ class ApiClient(
 
     private fun enc(value: String) = java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
         .replace("+", "%20")
+}
+
+class RelayCookieJar : CookieJar {
+    private val stored = mutableListOf<Cookie>()
+
+    @Synchronized
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        cookies.forEach { incoming ->
+            stored.removeAll { it.name == incoming.name && it.domain == incoming.domain && it.path == incoming.path }
+            stored.add(incoming)
+        }
+    }
+
+    @Synchronized
+    override fun loadForRequest(url: HttpUrl): List<Cookie> =
+        stored.filter { it.matches(url) }
+
+    @Synchronized
+    fun clear() {
+        stored.clear()
+    }
 }

@@ -30,64 +30,79 @@ struct RcColors {
     let fgSoft: Color
     let fgMuted: Color
     let border: Color
+    let borderStrong: Color
     let accentSoft: Color
     let accentBorder: Color
     let accentStrong: Color
     let accentSolid: Color
+    let accentSolidHover: Color
     let accentSolidFg: Color
     let dangerBg: Color
     let dangerBorder: Color
     let dangerFg: Color
     let successFg: Color
+    let successBg: Color
     let warningFg: Color
+    let warningBg: Color
+    let warningBorder: Color
     let overlay: Color
 
     static let dark = RcColors(
-        appBg: Color(hex: 0x24231F),
-        panel: Color(hex: 0x2E2D28),
-        surface: Color(hex: 0x2A2924),
-        surfaceStrong: Color(hex: 0x36352F),
-        muted: Color(hex: 0x3D3C35),
-        hover: Color(hex: 0x403E36),
-        fg: Color(hex: 0xF1EFE8),
-        fgSoft: Color(hex: 0xC9C6BB),
-        fgMuted: Color(hex: 0xA3A090),
-        border: Color(hex: 0x48473E),
-        accentSoft: Color(hex: 0x3A3420),
-        accentBorder: Color(hex: 0x8A6B2A),
-        accentStrong: Color(hex: 0xF0C56A),
-        accentSolid: Color(hex: 0xE0B14A),
-        accentSolidFg: Color(hex: 0x2F2A16),
-        dangerBg: Color(hex: 0x3A2220),
-        dangerBorder: Color(hex: 0x7A3A34),
-        dangerFg: Color(hex: 0xE8A39A),
-        successFg: Color(hex: 0x8FD4B0),
-        warningFg: Color(hex: 0xF0C56A),
-        overlay: Color.black.opacity(0.72)
+        appBg: Color(hex: 0x0D0C08),
+        panel: Color(hex: 0x15140F),
+        surface: Color(hex: 0x12100D),
+        surfaceStrong: Color(hex: 0x1C1B15),
+        muted: Color(hex: 0x22201B),
+        hover: Color(hex: 0x25231C),
+        fg: Color(hex: 0xEDEBE5),
+        fgSoft: Color(hex: 0xBDBAB2),
+        fgMuted: Color(hex: 0x8F8C83),
+        border: Color(hex: 0x2C2A23),
+        borderStrong: Color(hex: 0x3A382F),
+        accentSoft: Color(hex: 0x30220D),
+        accentBorder: Color(hex: 0x79561E),
+        accentStrong: Color(hex: 0xF6C071),
+        accentSolid: Color(hex: 0xEAAA40),
+        accentSolidHover: Color(hex: 0xF8BB5E),
+        accentSolidFg: Color(hex: 0x1A1207),
+        dangerBg: Color(hex: 0xEF656B, alpha: 0.13),
+        dangerBorder: Color(hex: 0xEF656B, alpha: 0.34),
+        dangerFg: Color(hex: 0xFFC2C0),
+        successFg: Color(hex: 0x98DDB4),
+        successBg: Color(hex: 0x5ABB88, alpha: 0.13),
+        warningFg: Color(hex: 0xFFD69A),
+        warningBg: Color(hex: 0xEAAA40, alpha: 0.13),
+        warningBorder: Color(hex: 0xEAAA40, alpha: 0.34),
+        overlay: Color(hex: 0x040402, alpha: 0.78)
     )
 
     static let light = RcColors(
-        appBg: Color(hex: 0xF3F6F7),
-        panel: Color(hex: 0xFBFCFD),
-        surface: Color(hex: 0xEEF2F5),
-        surfaceStrong: Color(hex: 0xE4EAEF),
-        muted: Color(hex: 0xDCE3E9),
-        hover: Color(hex: 0xE4EBF1),
-        fg: Color(hex: 0x2A3340),
-        fgSoft: Color(hex: 0x4B5565),
-        fgMuted: Color(hex: 0x667084),
-        border: Color(hex: 0xCDD6DE),
-        accentSoft: Color(hex: 0xF6E7C4),
-        accentBorder: Color(hex: 0xC3922E),
-        accentStrong: Color(hex: 0x8A5A12),
-        accentSolid: Color(hex: 0xD4A017),
-        accentSolidFg: Color(hex: 0x2F2A16),
-        dangerBg: Color(hex: 0xF8E4E1),
-        dangerBorder: Color(hex: 0xE2B4AD),
-        dangerFg: Color(hex: 0x8A2E28),
-        successFg: Color(hex: 0x2F7A56),
-        warningFg: Color(hex: 0x8A5A12),
-        overlay: Color.black.opacity(0.35)
+        appBg: Color(hex: 0xEFF4F6),
+        panel: Color(hex: 0xF8FCFD),
+        surface: Color(hex: 0xE9F0F2),
+        surfaceStrong: Color(hex: 0xDFE8EB),
+        muted: Color(hex: 0xD6E0E3),
+        hover: Color(hex: 0xDAE7EC),
+        fg: Color(hex: 0x151C1F),
+        fgSoft: Color(hex: 0x39444B),
+        fgMuted: Color(hex: 0x59656D),
+        border: Color(hex: 0xC4D0D4),
+        borderStrong: Color(hex: 0xA7B8BD),
+        accentSoft: Color(hex: 0xF8E5CB),
+        accentBorder: Color(hex: 0xBC8B3F),
+        accentStrong: Color(hex: 0x874E00),
+        accentSolid: Color(hex: 0xD1900B),
+        accentSolidHover: Color(hex: 0xC67D00),
+        accentSolidFg: Color(hex: 0x1A1207),
+        dangerBg: Color(hex: 0xBD2D3E, alpha: 0.10),
+        dangerBorder: Color(hex: 0xBD2D3E, alpha: 0.24),
+        dangerFg: Color(hex: 0x830A21),
+        successFg: Color(hex: 0x004721),
+        successBg: Color(hex: 0x5ABB88, alpha: 0.10),
+        warningFg: Color(hex: 0x683700),
+        warningBg: Color(hex: 0xD1900B, alpha: 0.10),
+        warningBorder: Color(hex: 0xD1900B, alpha: 0.24),
+        overlay: Color(hex: 0x11171B, alpha: 0.46)
     )
 }
 
@@ -105,5 +120,6 @@ extension Color {
 
 enum Rc {
     static let radius: CGFloat = 6
+    static let panelRadius: CGFloat = 8
     static let touch: CGFloat = 44
 }

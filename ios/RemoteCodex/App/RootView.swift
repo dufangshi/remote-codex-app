@@ -165,18 +165,11 @@ struct RootView: View {
                     Text("Remote Codex").font(.system(size: 14, weight: .semibold)).foregroundStyle(colors.fg)
                     Text("Supervisor controls").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
                 }.padding(12)
-                menuRow("Workspaces", selected: {
-                    if case .workspaces = nav.current { return true }
+                menuRow("Device management", selected: {
+                    if case .devices = nav.current { return true }
                     return false
                 }()) {
-                    if let id = nav.current.deviceId { nav.push(.workspaces(deviceId: id)) }
-                    navOpen = false
-                }
-                menuRow("Import Session", selected: {
-                    if case .threadImport = nav.current { return true }
-                    return false
-                }()) {
-                    if let id = nav.current.deviceId { nav.push(.threadImport(deviceId: id)) }
+                    nav.push(.devices)
                     navOpen = false
                 }
                 menuRow("Settings", selected: false) {
@@ -205,7 +198,6 @@ struct RootView: View {
                     Text(session?.user?.email ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
                 }.padding(12)
                 menuRow("Account settings", selected: false) { accountOpen = false; nav.push(.account) }
-                menuRow("Device management", selected: false) { accountOpen = false; nav.push(.devices) }
                 menuRow("Log out", selected: false) {
                     accountOpen = false
                     Task {
@@ -236,6 +228,24 @@ struct RootView: View {
                     Spacer()
                     Button("Close settings") { settingsOpen = false }.foregroundStyle(colors.fgMuted)
                 }
+                Text("Completed turns").font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
+                Button {
+                    store.autoCollapseCompletedTurns.toggle()
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text("Auto-collapse completed turns").foregroundStyle(colors.fg)
+                        Text(store.autoCollapseCompletedTurns
+                             ? "Completed turns collapse after they finish."
+                             : "Completed turns stay expanded.")
+                            .font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(store.autoCollapseCompletedTurns ? colors.accentSoft : colors.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(store.autoCollapseCompletedTurns ? colors.accentBorder : colors.border, lineWidth: 1))
+                }
+                .accessibilityIdentifier("autoCollapseCompletedTurns")
                 Text("Appearance").font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
                 ForEach(ThemeMode.allCases) { mode in
                     Button {

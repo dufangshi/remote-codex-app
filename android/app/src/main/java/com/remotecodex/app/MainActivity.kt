@@ -270,17 +270,9 @@ class MainActivity : ComponentActivity() {
                     }
 
                     if (navOpen) {
-                        val deviceId = currentDeviceId(route)
                         NavMenu(
-                            workspacesSelected = route is AppRoute.Workspaces,
-                            importSelected = route is AppRoute.ThreadImport,
-                            onWorkspaces = {
-                                if (deviceId != null) go(AppRoute.Workspaces(deviceId))
-                                else go(AppRoute.Devices)
-                            },
-                            onImport = {
-                                if (deviceId != null) go(AppRoute.ThreadImport(deviceId))
-                            },
+                            devicesSelected = route is AppRoute.Devices,
+                            onDevices = { go(AppRoute.Devices) },
                             onSettings = {
                                 navOpen = false
                                 settingsOpen = true
@@ -292,7 +284,6 @@ class MainActivity : ComponentActivity() {
                         AccountMenu(
                             session = session,
                             onAccount = { go(AppRoute.Account) },
-                            onDevices = { go(AppRoute.Devices) },
                             onLogout = {
                                 scope.launch {
                                     api.logout()
@@ -308,10 +299,12 @@ class MainActivity : ComponentActivity() {
                     if (settingsOpen) {
                         SettingsSheet(
                             themeMode = themeMode,
+                            autoCollapseCompletedTurns = store.autoCollapseCompletedTurns,
                             onThemeMode = {
                                 themeMode = it
                                 store.themeMode = it
                             },
+                            onAutoCollapse = { store.autoCollapseCompletedTurns = it },
                             onDismiss = { settingsOpen = false },
                         )
                     }

@@ -45,12 +45,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.remotecodex.app.data.ApiClient
+import com.remotecodex.app.data.AuthenticatorEnrollment
 import com.remotecodex.app.data.RelayDevice
+import com.remotecodex.app.data.SecurityStatus
 import com.remotecodex.app.data.RelayPortal
 import com.remotecodex.app.data.RelaySession
 import com.remotecodex.app.data.RelayShare
@@ -216,12 +219,14 @@ fun DevicesScreen(
                             devices.forEach { device ->
                                 DeviceCard(
                                     device = device,
+                                    relayHttps = store.relayUrl.startsWith("https://"),
                                     onConnect = { onConnectDevice(device) },
                                     onCopyUnix = {
-                                        copyText(
-                                            context,
-                                            unixSetup(store.relayUrl, device.token ?: ""),
-                                        )
+                                        scope.launch {
+                                            runCatching { api.fetchSetupToken(device.id) }
+                                                .onSuccess { copyText(context, unixSetup(store.relayUrl, it.token)) }
+                                                .onFailure { error = it.message }
+                                        }
                                     },
                                     onDelete = { deleting = device },
                                 )
@@ -282,7 +287,23 @@ fun DevicesScreen(
                             }
                         }
                     }
-                    2 -> EmptyCard("No devices have been shared by this account yet.")
+                    2 -> {
+                        val grants = portal?.grantsByMe.orEmpty()
+                        if (grants.isEmpty()) {
+                            EmptyCard("No devices have been shared by this account yet.")
+                        } else {
+                            grants.forEach { grant ->
+                                ShareRow(
+                                    title = grant.deviceName.ifBlank { "Device" },
+                                    subtitle = listOfNotNull(
+                                        grant.targetUsername.takeIf { it.isNotBlank() },
+                                        grant.lastAccessedAt?.let { "Visited $it" } ?: "No visits yet",
+                                    ).joinToString(" · "),
+                                    onOpen = { onOpenSharedDevice(grant.deviceId) },
+                                )
+                            }
+                        }
+                    }
                     else -> ShareList(portal?.sharedByMe.orEmpty(), empty = "No threads have been shared by this account yet.") { share ->
                         onOpenSharedThread(share.deviceId, share.threadId, share.workspaceId)
                     }
@@ -313,6 +334,7 @@ fun DevicesScreen(
 @Composable
 private fun DeviceCard(
     device: RelayDevice,
+    relayHttps: Boolean,
     onConnect: () -> Unit,
     onCopyUnix: () -> Unit,
     onDelete: () -> Unit,
@@ -335,9 +357,22 @@ private fun DeviceCard(
         Mono(device.tokenPreview)
         Spacer(Modifier.height(6.dp))
         Text(
-            if (device.connected) "Online. Connected time unavailable." else "Offline",
+            when {
+                device.hostedStatus == "stopped" -> "Stopped. Connect to wake this VM."
+                device.hostedStatus != null && device.hostedStatus != "online" ->
+                    "Hosted: ${device.hostedStatus}. The hosted supervisor is not ready yet."
+                device.connected && !device.connectedAt.isNullOrBlank() -> "Online since ${device.connectedAt}"
+                device.connected -> "Online. Connected time unavailable."
+                !device.lastHeartbeatAt.isNullOrBlank() -> "Last heartbeat ${device.lastHeartbeatAt}"
+                else -> "No heartbeat recorded."
+            },
             color = colors.fgMuted,
             fontSize = 12.sp,
+        )
+        Text(
+            if (relayHttps) "Device connection uses HTTPS" else "Connection is not end-to-end encrypted",
+            color = if (relayHttps) colors.successFg else colors.fgMuted,
+            fontSize = 11.sp,
         )
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1092,7 +1127,7 @@ fun AccountScreen(
     }
 
     RcPage {
-        ProductHeader(title = "Account", backLabel = "Back", onBack = onBack)
+        ProductHeader(title = "Account settings", backLabel = "Devices", onBack = onBack)
         if (loading) {
             Text("Loading account...", color = colors.fgMuted, modifier = Modifier.padding(20.dp))
             return@RcPage
@@ -1153,6 +1188,110 @@ fun AccountScreen(
                     savingPassword = false
                 }
             }
+            Spacer(Modifier.height(28.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(colors.border))
+            Spacer(Modifier.height(20.dp))
+            Text("Security", color = colors.fg, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text("Protect your account and devices.", color = colors.fgMuted, fontSize = 13.sp)
+            Spacer(Modifier.height(12.dp))
+            AccountSecurityPanel(api = api)
+        }
+    }
+}
+
+@Composable
+private fun AccountSecurityPanel(api: ApiClient) {
+    val colors = rcColors
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf<SecurityStatus?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var enrollment by remember { mutableStateOf<AuthenticatorEnrollment?>(null) }
+    var code by remember { mutableStateOf("") }
+    var recovery by remember { mutableStateOf<List<String>?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    fun refresh() {
+        scope.launch {
+            runCatching { api.fetchSecurity() }
+                .onSuccess { status = it; error = null }
+                .onFailure { error = it.message }
+        }
+    }
+    LaunchedEffect(Unit) { refresh() }
+    if (error != null) Notice(error!!)
+    val current = status
+    if (current == null && error == null) {
+        Text("Loading security settings…", color = colors.fgMuted, fontSize = 14.sp)
+        return
+    }
+    if (current != null) {
+        Text("Authenticator app", color = colors.fg, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+        Text("Google Authenticator and compatible apps.", color = colors.fgMuted, fontSize = 13.sp)
+        Spacer(Modifier.height(8.dp))
+        SecondaryButton(if (current.authenticatorEnabled) "Disable" else "Set up", enabled = !busy) {
+            busy = true
+            scope.launch {
+                if (current.authenticatorEnabled) {
+                    runCatching { api.disableAuthenticator() }.onSuccess { refresh() }.onFailure { error = it.message }
+                } else {
+                    runCatching { api.enrollAuthenticator() }.onSuccess { enrollment = it }.onFailure { error = it.message }
+                }
+                busy = false
+            }
+        }
+        enrollment?.let { enroll ->
+            Spacer(Modifier.height(12.dp))
+            Text("Scan this code in your authenticator, then enter its six-digit code.", color = colors.fgMuted, fontSize = 13.sp)
+            Text(enroll.secret, color = colors.fg, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+            Spacer(Modifier.height(8.dp))
+            RcField("Setup verification code", code, { code = it }, tag = "authenticatorSetupCode")
+            Spacer(Modifier.height(8.dp))
+            PrimaryButton("Enable authenticator", enabled = !busy && code.length == 6) {
+                busy = true
+                scope.launch {
+                    runCatching { api.confirmAuthenticator(code) }
+                        .onSuccess {
+                            recovery = it.recoveryCodes
+                            enrollment = null
+                            code = ""
+                            refresh()
+                        }
+                        .onFailure { error = it.message }
+                    busy = false
+                }
+            }
+        }
+        recovery?.let { codes ->
+            Spacer(Modifier.height(12.dp))
+            Text("Recovery codes", color = colors.fg, fontWeight = FontWeight.Medium)
+            codes.forEach { Text(it, fontFamily = FontFamily.Monospace, color = colors.fg, fontSize = 13.sp) }
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("Sessions", color = colors.fg, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+        current.sessions.forEach { session ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(session.name.ifBlank { "Session" }, color = colors.fg, fontSize = 14.sp)
+                    if (session.current) Text("Current session", color = colors.successFg, fontSize = 12.sp)
+                }
+                if (!session.current) {
+                    Text("Revoke", color = colors.dangerFg, fontSize = 13.sp, modifier = Modifier.clickable {
+                        scope.launch { runCatching { api.revokeSecuritySession(session.id) }.onSuccess { refresh() } }
+                    })
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Trusted browsers", color = colors.fg, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+        if (current.trustedBrowsers.isEmpty()) {
+            Text("No trusted browsers.", color = colors.fgMuted, fontSize = 13.sp)
+        }
+        current.trustedBrowsers.forEach { browser ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(browser.name.ifBlank { "Browser" }, color = colors.fg, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                Text("Revoke", color = colors.dangerFg, fontSize = 13.sp, modifier = Modifier.clickable {
+                    scope.launch { runCatching { api.revokeTrustedBrowser(browser.id) }.onSuccess { refresh() } }
+                })
+            }
         }
     }
 }
@@ -1160,7 +1299,9 @@ fun AccountScreen(
 @Composable
 fun SettingsSheet(
     themeMode: ThemeMode,
+    autoCollapseCompletedTurns: Boolean,
     onThemeMode: (ThemeMode) -> Unit,
+    onAutoCollapse: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val colors = rcColors
@@ -1189,6 +1330,27 @@ fun SettingsSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
+            Text("Completed turns", color = colors.fg, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+            Spacer(Modifier.height(8.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RcRadius)
+                    .border(1.dp, if (autoCollapseCompletedTurns) colors.accentBorder else colors.border, RcRadius)
+                    .background(if (autoCollapseCompletedTurns) colors.accentSoft else colors.surface)
+                    .clickable { onAutoCollapse(!autoCollapseCompletedTurns) }
+                    .padding(12.dp)
+                    .testTag("autoCollapseCompletedTurns"),
+            ) {
+                Text("Auto-collapse completed turns", color = colors.fg, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                Text(
+                    if (autoCollapseCompletedTurns) "Completed turns collapse after they finish."
+                    else "Completed turns stay expanded.",
+                    color = colors.fgMuted,
+                    fontSize = 12.sp,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
             Text("Appearance", color = colors.fg, fontWeight = FontWeight.Medium, fontSize = 14.sp)
             Spacer(Modifier.height(8.dp))
             listOf(
@@ -1220,7 +1382,6 @@ fun SettingsSheet(
 fun AccountMenu(
     session: RelaySession?,
     onAccount: () -> Unit,
-    onDevices: () -> Unit,
     onLogout: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1246,11 +1407,8 @@ fun AccountMenu(
             MenuItem("Account settings", onClick = onAccount, leading = {
                 Icon(Icons.Filled.Settings, null, tint = colors.fgMuted, modifier = Modifier.size(16.dp))
             })
-            MenuItem("Device management", onClick = onDevices, leading = {
-                Icon(Icons.Filled.Smartphone, null, tint = colors.fgMuted, modifier = Modifier.size(16.dp))
-            })
             MenuItem("Log out", onClick = onLogout, leading = {
-                Icon(Icons.Filled.Logout, null, tint = colors.fgMuted, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.Logout, null, tint = colors.dangerFg, modifier = Modifier.size(16.dp))
             })
         }
     }
@@ -1258,19 +1416,14 @@ fun AccountMenu(
 
 @Composable
 fun NavMenu(
-    onWorkspaces: () -> Unit,
-    onImport: () -> Unit,
+    devicesSelected: Boolean,
+    onDevices: () -> Unit,
     onSettings: () -> Unit,
-    workspacesSelected: Boolean,
-    importSelected: Boolean,
     onDismiss: () -> Unit,
 ) {
     MenuSheet("Remote Codex", "Supervisor controls", onDismiss) {
-        MenuItem("Workspaces", selected = workspacesSelected, onClick = onWorkspaces, leading = {
-            Icon(Icons.Filled.FolderCopy, null, tint = rcColors.fgMuted, modifier = Modifier.size(16.dp))
-        })
-        MenuItem("Import Session", selected = importSelected, onClick = onImport, leading = {
-            Icon(Icons.Filled.FileDownload, null, tint = rcColors.fgMuted, modifier = Modifier.size(16.dp))
+        MenuItem("Device management", selected = devicesSelected, onClick = onDevices, leading = {
+            Icon(Icons.Filled.Smartphone, null, tint = rcColors.fgMuted, modifier = Modifier.size(16.dp))
         })
         MenuItem("Settings", onClick = onSettings, leading = {
             Icon(Icons.Filled.Settings, null, tint = rcColors.fgMuted, modifier = Modifier.size(16.dp))

@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.remotecodex.app.data.ApiClient
 import com.remotecodex.app.data.ApiException
+import com.remotecodex.app.data.LoginChallenge
 import com.remotecodex.app.data.RelaySession
 import com.remotecodex.app.data.SessionStore
 import com.remotecodex.app.data.normalizeRelayUrl
@@ -255,8 +256,8 @@ fun HomeScreen(
             Text("Three steps, one outbound tunnel.", color = colors.fgMuted, fontSize = 12.sp)
             Spacer(Modifier.height(12.dp))
             ConnectionStep("01", "Register a device", "Create a one-time token for the private supervisor machine.")
-            ConnectionStep("02", "Start the supervisor", "The private machine opens an outbound tunnel to this relay.")
-            ConnectionStep("03", "Connect and work", "Open the device, then use its workspaces and threads.")
+            ConnectionStep("02", "Start the supervisor", "Keep an outbound relay connection open from that machine.")
+            ConnectionStep("03", "Open your workspace", "Select the online device and continue to its workspaces and threads.")
         }
     }
 }
@@ -302,6 +303,7 @@ fun PortalScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var challenge by remember { mutableStateOf<LoginChallenge?>(null) }
 
     LaunchedEffect(store.relayUrl) {
         loading = true
@@ -314,6 +316,8 @@ fun PortalScreen(
                 }
             }
             .onFailure { error = it.message ?: "Unable to load the relay portal." }
+        runCatching { api.fetchLoginChallenge() }
+            .onSuccess { if (it.challengeRequired) challenge = it }
         loading = false
     }
 
@@ -351,6 +355,18 @@ fun PortalScreen(
         ) {
             if (loading) {
                 Text("Checking relay session...", color = colors.fgMuted, fontSize = 14.sp, modifier = Modifier.padding(48.dp))
+                return@Column
+            }
+            challenge?.let { pending ->
+                LoginVerification(
+                    api = api,
+                    challenge = pending,
+                    onSuccess = onAuthenticated,
+                    onBack = {
+                        scope.launch { api.cancelLoginChallenge() }
+                        challenge = null
+                    },
+                )
                 return@Column
             }
             Column(
@@ -492,7 +508,14 @@ fun PortalScreen(
                             try {
                                 if (mode == "login") {
                                     val result = api.login(identifier, password)
-                                    if (result.session.user?.role == "admin") {
+                                    password = ""
+                                    if (result.challengeRequired) {
+                                        challenge = LoginChallenge(
+                                            challengeRequired = true,
+                                            authenticator = result.authenticator,
+                                            passkey = result.passkey,
+                                        )
+                                    } else if (result.session.user?.role == "admin") {
                                         api.logout()
                                         error = "This portal accepts relay user accounts only."
                                     } else {
@@ -534,8 +557,101 @@ fun PortalScreen(
 }
 
 @Composable
+private fun LoginVerification(
+    api: ApiClient,
+    challenge: LoginChallenge,
+    onSuccess: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val colors = rcColors
+    val scope = rememberCoroutineScope()
+    var code by remember { mutableStateOf("") }
+    var rememberBrowser by remember { mutableStateOf(true) }
+    var recovery by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    Column(
+        Modifier
+            .widthIn(max = 440.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, colors.border, RoundedCornerShape(8.dp))
+            .background(colors.panel)
+            .padding(20.dp),
+    ) {
+        Text("Verify it’s you", color = colors.fg, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Text("One more step for this browser.", color = colors.fgMuted, fontSize = 14.sp)
+        Spacer(Modifier.height(16.dp))
+        if (challenge.authenticator || recovery) {
+            RcField(
+                if (recovery) "Recovery code" else "Authenticator code",
+                code,
+                { code = it; error = null },
+                tag = "mfaCodeField",
+            )
+            if (!recovery) {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.clickable { rememberBrowser = !rememberBrowser },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(if (rememberBrowser) "☑" else "☐", color = colors.fg, fontSize = 16.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Trust this browser for 30 days", color = colors.fgMuted, fontSize = 14.sp)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            PrimaryButton(
+                if (busy) "Verifying…" else "Verify",
+                enabled = !busy && code.isNotBlank(),
+                tag = "verifyMfaButton",
+            ) {
+                busy = true
+                error = null
+                scope.launch {
+                    runCatching { api.verifyLoginCode(code, rememberBrowser && !recovery) }
+                        .onSuccess { onSuccess() }
+                        .onFailure { error = it.message }
+                    busy = false
+                }
+            }
+        } else {
+            Text("Use a recovery code, or finish sign-in on the web with a passkey.", color = colors.fgMuted, fontSize = 14.sp)
+        }
+        if (error != null) {
+            Spacer(Modifier.height(12.dp))
+            Notice(error!!)
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                if (recovery) "Use another method" else "Use a recovery code",
+                color = colors.fgMuted,
+                fontSize = 14.sp,
+                modifier = Modifier.clickable {
+                    recovery = !recovery
+                    code = ""
+                    error = null
+                },
+            )
+            Text(
+                "Back to sign in",
+                color = colors.fgMuted,
+                fontSize = 14.sp,
+                modifier = Modifier.clickable(onClick = onBack).testTag("mfaBack"),
+            )
+        }
+    }
+}
+
+@Composable
 fun GuideScreen(onBack: () -> Unit) {
     val colors = rcColors
+    val modes = listOf(
+        "Local mode" to "For the same machine, an emulator, LAN, or Tailscale network. No relay account is needed.",
+        "Server mode" to "For a directly exposed supervisor protected by its own server login on a trusted private server.",
+        "Relay mode" to "For a machine that should accept no inbound connection. The supervisor opens an outbound tunnel.",
+    )
     val steps = listOf(
         "Register or sign in" to "Open the relay portal, then create or enter your relay account.",
         "Create a device" to "In Devices, choose a recognizable name and create a one-time token for the private supervisor.",
@@ -563,6 +679,16 @@ fun GuideScreen(onBack: () -> Unit) {
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(colors.border))
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("Connection modes", color = colors.fg, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+            modes.forEach { (title, body) ->
+                Column {
+                    Text(title, color = colors.fg, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(body, color = colors.fgMuted, fontSize = 14.sp, lineHeight = 22.sp)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("Relay steps", color = colors.fg, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
             steps.forEachIndexed { index, (title, body) ->
                 Row {
                     Text(String.format("%02d", index + 1), color = colors.fgMuted, modifier = Modifier.width(36.dp), fontSize = 13.sp)

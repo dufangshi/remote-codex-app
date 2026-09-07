@@ -23,8 +23,75 @@ final class APIClient {
             body: ["identifier": identifier, "password": password],
             authed: false
         )
-        await MainActor.run { store.token = result.token }
+        if let token = result.token, !token.isEmpty {
+            await MainActor.run { store.token = token }
+        }
         return result
+    }
+
+    func fetchLoginChallenge() async throws -> LoginChallenge {
+        try await request("/relay/auth/challenge", authed: false)
+    }
+
+    func verifyLoginCode(code: String, rememberBrowser: Bool) async throws -> RelayLoginResult {
+        let result: RelayLoginResult = try await request(
+            "/relay/auth/challenge",
+            method: "POST",
+            body: ["code": code, "rememberBrowser": rememberBrowser],
+            authed: false
+        )
+        if let token = result.token, !token.isEmpty {
+            await MainActor.run { store.token = token }
+        }
+        return result
+    }
+
+    func cancelLoginChallenge() async {
+        _ = try? await raw("/relay/auth/challenge", method: "DELETE", body: nil, authed: false)
+    }
+
+    func fetchSecurity() async throws -> SecurityStatus {
+        try await request("/relay/account/security")
+    }
+
+    func enrollAuthenticator() async throws -> AuthenticatorEnrollment {
+        try await request("/relay/account/security/authenticator/enroll", method: "POST")
+    }
+
+    func confirmAuthenticator(code: String) async throws -> RecoveryCodesResult {
+        try await request("/relay/account/security/authenticator/confirm", method: "POST", body: ["code": code])
+    }
+
+    func disableAuthenticator() async throws {
+        let _: [String: String] = try await request("/relay/account/security/authenticator", method: "DELETE")
+    }
+
+    func regenerateRecoveryCodes() async throws -> RecoveryCodesResult {
+        try await request("/relay/account/security/recovery-codes", method: "POST")
+    }
+
+    func revokeSecuritySession(_ id: String) async throws {
+        let _: [String: String] = try await request("/relay/account/security/sessions/\(enc(id))", method: "DELETE")
+    }
+
+    func revokeTrustedBrowser(_ id: String) async throws {
+        let _: [String: String] = try await request("/relay/account/security/browsers/\(enc(id))", method: "DELETE")
+    }
+
+    func fetchSetupToken(deviceId: String) async throws -> SetupTokenResult {
+        try await request("/relay/devices/\(enc(deviceId))/setup-token", method: "POST")
+    }
+
+    func rotateDeviceToken(deviceId: String) async throws -> RelayCreateDeviceResult {
+        try await request("/relay/devices/\(enc(deviceId))/token", method: "POST")
+    }
+
+    func revokeGrant(_ id: String) async throws {
+        let _: [String: String] = try await request("/relay/grants/\(enc(id))", method: "DELETE")
+    }
+
+    func revokeShare(_ id: String) async throws {
+        let _: [String: String] = try await request("/relay/shares/\(enc(id))", method: "DELETE")
     }
 
     func register(email: String, username: String, password: String, registrationPassword: String?) async throws -> RelayRegisterResult {
@@ -209,16 +276,22 @@ final class APIClient {
             request.httpBody = Data("{}".utf8)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let http = response as? HTTPURLResponse
-        let status = http?.statusCode ?? 0
-        if status >= 400 {
-            if let parsed = try? decoder.decode(ApiErrorBody.self, from: data) {
-                throw APIError.message(parsed.message)
+        var wakeAttempt = 0
+        while true {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let http = response as? HTTPURLResponse
+            let status = http?.statusCode ?? 0
+            if status < 400 {
+                return data
             }
-            throw APIError.message(String(data: data, encoding: .utf8) ?? "Request failed (\(status)).")
+            let parsed = try? decoder.decode(ApiErrorBody.self, from: data)
+            let hostedStarting = status == 503 && parsed?.details?.reason == "hosted_sandbox_starting"
+            if !hostedStarting || wakeAttempt >= 60 {
+                throw APIError.message(parsed?.message ?? String(data: data, encoding: .utf8) ?? "Request failed (\(status)).")
+            }
+            wakeAttempt += 1
+            try await Task.sleep(nanoseconds: 1_500_000_000)
         }
-        return data
     }
 
     private func enc(_ value: String) -> String {

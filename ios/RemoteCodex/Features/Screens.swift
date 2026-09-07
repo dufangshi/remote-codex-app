@@ -99,9 +99,29 @@ struct HomeScreen: View {
                 RcButton(label: "Change relay URL", primary: false, identifier: "changeRelayButton", action: onChangeRelay)
             }
             .padding(20)
+            Rectangle().fill(colors.border).frame(height: 1)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Connection path").font(.system(size: 14, weight: .semibold)).foregroundStyle(colors.fg)
+                Text("Three steps, one outbound tunnel.").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                connectionStep("01", "Register a device", "Create a one-time token for the private supervisor machine.")
+                connectionStep("02", "Start the supervisor", "Keep an outbound relay connection open from that machine.")
+                connectionStep("03", "Open your workspace", "Select the online device and continue to its workspaces and threads.")
+            }
+            .padding(20)
         }
         .background(colors.appBg)
         .task { await load() }
+    }
+
+    private func connectionStep(_ number: String, _ title: String, _ body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(number).font(.system(size: 12, design: .monospaced)).foregroundStyle(colors.fgMuted).frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
+                Text(body).font(.system(size: 13)).foregroundStyle(colors.fgMuted)
+            }
+        }
+        .padding(.vertical, 8)
     }
 
     private var title: String {
@@ -153,6 +173,7 @@ struct PortalScreen: View {
     @State private var error: String?
     @State private var notice: String?
     @State private var busy = false
+    @State private var challenge: LoginChallenge?
 
     var body: some View {
         ScrollView {
@@ -173,6 +194,11 @@ struct PortalScreen: View {
             Rectangle().fill(colors.border).frame(height: 1)
             if loading {
                 Text("Checking relay session...").foregroundStyle(colors.fgMuted).padding(48)
+            } else if let challenge {
+                LoginVerificationView(api: api, challenge: challenge, onSuccess: onAuthenticated, onBack: {
+                    Task { await api.cancelLoginChallenge() }
+                    self.challenge = nil
+                })
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Relay access").foregroundStyle(colors.accentStrong).font(.system(size: 14, weight: .medium))
@@ -194,6 +220,20 @@ struct PortalScreen: View {
                         RcField(label: "Username", text: $username, identifier: "usernameField")
                         RcField(label: "Registration code", text: $registrationPassword, secure: true, identifier: "registrationCodeField")
                     }
+                    if session?.registrationSettings?.googleAuthEnabled == true || session?.registrationSettings?.githubAuthEnabled == true {
+                        if session?.registrationSettings?.googleAuthEnabled == true {
+                            RcButton(label: "Continue with Google", primary: false, identifier: "googleOAuth") {
+                                if let url = Optional(api.oauthStartURL(provider: "google")) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
+                        }
+                        if session?.registrationSettings?.githubAuthEnabled == true {
+                            RcButton(label: "Continue with GitHub", primary: false, identifier: "githubOAuth") {
+                                UIApplication.shared.open(api.oauthStartURL(provider: "github"))
+                            }
+                        }
+                    }
                     RcField(label: "Password", text: $password, secure: true, identifier: "passwordField")
                     if let error { NoticeView(text: error) }
                     if let notice { NoticeView(text: notice, tone: .accent) }
@@ -214,6 +254,8 @@ struct PortalScreen: View {
             session = try? await api.fetchSession()
             if session?.authenticated == true && session?.user?.role != "admin" {
                 onAuthenticated()
+            } else if let pending = try? await api.fetchLoginChallenge(), pending.challengeRequired == true {
+                challenge = pending
             }
             loading = false
         }
@@ -242,7 +284,14 @@ struct PortalScreen: View {
         do {
             if mode == "login" {
                 let result = try await api.login(identifier: identifier, password: password)
-                if result.session.user?.role == "admin" {
+                password = ""
+                if result.challengeRequired == true {
+                    challenge = LoginChallenge(
+                        challengeRequired: true,
+                        authenticator: result.authenticator,
+                        passkey: result.passkey
+                    )
+                } else if result.session.user?.role == "admin" {
                     await api.logout()
                     error = "This portal accepts relay user accounts only."
                 } else {
@@ -268,9 +317,74 @@ struct PortalScreen: View {
     }
 }
 
+struct LoginVerificationView: View {
+    let api: APIClient
+    let challenge: LoginChallenge
+    var onSuccess: () -> Void
+    var onBack: () -> Void
+    @Environment(\.rcColors) private var colors
+    @State private var code = ""
+    @State private var remember = true
+    @State private var recovery = false
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Verify it’s you").font(.system(size: 22, weight: .semibold)).foregroundStyle(colors.fg)
+            Text("One more step for this browser.").font(.system(size: 14)).foregroundStyle(colors.fgMuted)
+            if challenge.authenticator == true || recovery {
+                RcField(label: recovery ? "Recovery code" : "Authenticator code", text: $code, identifier: "mfaCodeField")
+                if !recovery {
+                    Button { remember.toggle() } label: {
+                        Text(remember ? "☑ Trust this browser for 30 days" : "☐ Trust this browser for 30 days")
+                            .font(.system(size: 14)).foregroundStyle(colors.fgMuted)
+                    }
+                }
+                RcButton(label: busy ? "Verifying…" : "Verify", enabled: !busy && !code.isEmpty, identifier: "verifyMfaButton") {
+                    Task {
+                        busy = true
+                        error = nil
+                        do {
+                            _ = try await api.verifyLoginCode(code: code, rememberBrowser: remember && !recovery)
+                            onSuccess()
+                        } catch {
+                            self.error = error.localizedDescription
+                        }
+                        busy = false
+                    }
+                }
+            } else {
+                Text("Use a recovery code, or finish sign-in on the web with a passkey.")
+                    .font(.system(size: 14)).foregroundStyle(colors.fgMuted)
+            }
+            if let error { NoticeView(text: error) }
+            HStack {
+                Button(recovery ? "Use another method" : "Use a recovery code") {
+                    recovery.toggle(); code = ""; error = nil
+                }.foregroundStyle(colors.fgMuted)
+                Spacer()
+                Button("Back to sign in", action: onBack)
+                    .foregroundStyle(colors.fgMuted)
+                    .accessibilityIdentifier("mfaBack")
+            }
+        }
+        .padding(20)
+        .background(colors.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
+        .padding(20)
+    }
+}
+
 struct GuideScreen: View {
     var onBack: () -> Void
     @Environment(\.rcColors) private var colors
+    private let modes = [
+        ("Local mode", "For the same machine, an emulator, LAN, or Tailscale network. No relay account is needed."),
+        ("Server mode", "For a directly exposed supervisor protected by its own server login on a trusted private server."),
+        ("Relay mode", "For a machine that should accept no inbound connection. The supervisor opens an outbound tunnel."),
+    ]
     private let steps = [
         ("Register or sign in", "Open the relay portal, then create or enter your relay account."),
         ("Create a device", "In Devices, choose a recognizable name and create a one-time token for the private supervisor."),
@@ -288,6 +402,16 @@ struct GuideScreen: View {
                 .accessibilityIdentifier("guideBack")
                 Text("Setup guide").foregroundStyle(colors.accentStrong)
                 Text("Connect a private supervisor").font(.system(size: 26, weight: .semibold)).foregroundStyle(colors.fg)
+                Text("Pick the mode that matches your network, then follow the relay steps when the private machine should only connect outward.")
+                    .font(.system(size: 14)).foregroundStyle(colors.fgSoft)
+                Text("Connection modes").font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
+                ForEach(Array(modes.enumerated()), id: \.offset) { _, mode in
+                    VStack(alignment: .leading) {
+                        Text(mode.0).font(.system(size: 16, weight: .semibold)).foregroundStyle(colors.fg)
+                        Text(mode.1).font(.system(size: 14)).foregroundStyle(colors.fgMuted)
+                    }
+                }
+                Text("Relay steps").font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
                 ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                     VStack(alignment: .leading) {
                         Text(String(format: "%02d  %@", index + 1, step.0)).font(.system(size: 16, weight: .semibold)).foregroundStyle(colors.fg)
@@ -319,6 +443,7 @@ struct DevicesScreen: View {
     @State private var deviceName = ""
     @State private var created: String?
     @State private var autoConnected = false
+    @State private var sharedTab = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -370,14 +495,31 @@ struct DevicesScreen: View {
                                         .accessibilityIdentifier("device-\(device.id)")
                                 }
                                 Text(device.tokenPreview ?? "").font(.system(size: 12, design: .monospaced)).foregroundStyle(colors.fgMuted)
-                                Text(device.connected == true ? "Online. Connected time unavailable." : "Offline")
-                                    .font(.system(size: 12)).foregroundStyle(colors.fgMuted)
-                                RcButton(
-                                    label: "Connect",
-                                    enabled: device.connected == true || device.hostedStatus == "stopped",
-                                    identifier: "connectDevice-\(device.id)"
-                                ) {
-                                    onConnect(device)
+                                Text(deviceStatusText(device)).font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                                Text(store.relayUrl.hasPrefix("https://") ? "Device connection uses HTTPS" : "Connection is not end-to-end encrypted")
+                                    .font(.system(size: 11)).foregroundStyle(store.relayUrl.hasPrefix("https://") ? colors.successFg : colors.fgMuted)
+                                HStack {
+                                    RcButton(
+                                        label: device.hostedStatus == "stopped" ? "Start & connect" : "Connect",
+                                        enabled: device.connected == true || (device.hostedStatus != nil && device.hostedStatus != "stopping" && device.hostedStatus != "deleting"),
+                                        identifier: "connectDevice-\(device.id)"
+                                    ) {
+                                        onConnect(device)
+                                    }
+                                    Button("Copy Unix setup") {
+                                        Task {
+                                            if let token = try? await api.fetchSetupToken(deviceId: device.id).token {
+                                                UIPasteboard.general.string = unixSetup(relayUrl: store.relayUrl, token: token)
+                                            }
+                                        }
+                                    }
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(colors.fg)
+                                    Button("Delete") {
+                                        Task { try? await api.deleteDevice(device.id); portal = try? await api.fetchPortal() }
+                                    }
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(colors.dangerFg)
                                 }
                             }
                             .padding(12)
@@ -394,20 +536,29 @@ struct DevicesScreen: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
                     .accessibilityIdentifier("deviceList")
                     Text("Shared access").font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
-                    ForEach(portal?.sharedWithMe ?? []) { share in
-                        Button {
-                            onOpenThread(share.deviceId, share.threadId, share.workspaceId)
-                        } label: {
-                            VStack(alignment: .leading) {
-                                Text(share.threadTitle ?? "Thread").foregroundStyle(colors.fg)
-                                Text(share.deviceName ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                    Text("Access you received and access you granted.").font(.system(size: 13)).foregroundStyle(colors.fgMuted)
+                    let tabs: [(String, Int)] = [
+                        ("Threads with me", portal?.sharedWithMe?.count ?? 0),
+                        ("Devices with me", portal?.sharedDevicesWithMe?.count ?? 0),
+                        ("Devices by me", portal?.grantsByMe?.count ?? 0),
+                        ("Threads by me", portal?.sharedByMe?.count ?? 0),
+                    ]
+                    HStack {
+                        ForEach(tabs.indices, id: \.self) { index in
+                            Button {
+                                sharedTab = index
+                            } label: {
+                                Text("\(tabs[index].0) \(tabs[index].1)")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 10)
+                                    .background(sharedTab == index ? colors.panel : colors.surface)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .foregroundStyle(sharedTab == index ? colors.fg : colors.fgMuted)
                             }
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(colors.panel)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
                     }
+                    sharedAccessList
                 }
                 .padding(20)
             }
@@ -430,6 +581,101 @@ struct DevicesScreen: View {
             }
         }
     }
+
+    @ViewBuilder
+    private var sharedAccessList: some View {
+        switch sharedTab {
+        case 0:
+            ForEach(portal?.sharedWithMe ?? []) { share in
+                Button {
+                    onOpenThread(share.deviceId, share.threadId, share.workspaceId)
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(share.threadTitle ?? "Thread").foregroundStyle(colors.fg)
+                        Text("\(share.deviceName ?? "") · \(share.ownerUsername ?? "")").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(colors.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            if portal?.sharedWithMe?.isEmpty != false {
+                Text("No sessions have been shared with this account yet.").foregroundStyle(colors.fgMuted).padding(12)
+            }
+        case 1:
+            ForEach(portal?.sharedDevicesWithMe ?? []) { grant in
+                Button { onOpenDevice(grant.deviceId) } label: {
+                    VStack(alignment: .leading) {
+                        Text(grant.deviceName ?? "Device").foregroundStyle(colors.fg)
+                        Text(grant.ownerUsername ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(colors.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            if portal?.sharedDevicesWithMe?.isEmpty != false {
+                Text("No devices have been shared with this account yet.").foregroundStyle(colors.fgMuted).padding(12)
+            }
+        case 2:
+            ForEach(portal?.grantsByMe ?? []) { grant in
+                Button { onOpenDevice(grant.deviceId) } label: {
+                    VStack(alignment: .leading) {
+                        Text(grant.deviceName ?? "Device").foregroundStyle(colors.fg)
+                        Text(grant.targetUsername ?? "Shared").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(colors.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            if portal?.grantsByMe?.isEmpty != false {
+                Text("No devices have been shared by this account yet.").foregroundStyle(colors.fgMuted).padding(12)
+            }
+        default:
+            ForEach(portal?.sharedByMe ?? []) { share in
+                Button {
+                    onOpenThread(share.deviceId, share.threadId, share.workspaceId)
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(share.threadTitle ?? "Thread").foregroundStyle(colors.fg)
+                        Text(share.deviceName ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(colors.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            if portal?.sharedByMe?.isEmpty != false {
+                Text("No threads have been shared by this account yet.").foregroundStyle(colors.fgMuted).padding(12)
+            }
+        }
+    }
+
+    private func deviceStatusText(_ device: RelayDevice) -> String {
+        if device.hostedStatus == "stopped" { return "Stopped. Connect to wake this VM." }
+        if let hosted = device.hostedStatus, hosted != "online" {
+            return "Hosted: \(hosted). The hosted supervisor is not ready yet."
+        }
+        if device.connected == true { return "Online. Connected time unavailable." }
+        return "No heartbeat recorded."
+    }
+}
+
+private func unixSetup(relayUrl: String, token: String) -> String {
+    let ws = relayUrl.hasPrefix("https://")
+        ? "wss://" + relayUrl.dropFirst("https://".count)
+        : "ws://" + relayUrl.dropFirst("http://".count)
+    return """
+    REMOTE_CODEX_RELAY_SERVER_URL=\(ws) \\
+    REMOTE_CODEX_RELAY_AGENT_TOKEN=\(token) \\
+    REMOTE_CODEX_RELAY_SUPERVISOR_PORT=45679 \\
+    remote-codex relay-supervisor
+    """
 }
 
 struct WorkspacesScreen: View {
@@ -667,7 +913,7 @@ struct WorkspaceNewScreen: View {
                 RcField(label: mode == "git" ? "Repository URL" : (mode == "path" ? "Absolute path" : "Folder name"), text: $value, identifier: "workspaceValue")
                 RcField(label: "Label (optional)", text: $label, identifier: "workspaceLabel")
                 if let error { NoticeView(text: error) }
-                RcButton(label: busy ? "Working..." : "Create folder", enabled: !busy && !value.isEmpty, identifier: "createWorkspaceButton") {
+                RcButton(label: busy ? "Working..." : (mode == "git" ? "Clone repository" : (mode == "path" ? "Add workspace" : "Create folder")), enabled: !busy && !value.isEmpty, identifier: "createWorkspaceButton") {
                     Task {
                         busy = true
                         var body: [String: Any] = [:]
@@ -833,7 +1079,7 @@ struct AccountScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ProductHeader(title: "Account", backLabel: "Back", onBack: onBack)
+            ProductHeader(title: "Account settings", backLabel: "Devices", onBack: onBack)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Profile").font(.system(size: 16, weight: .semibold)).foregroundStyle(colors.fg)
@@ -863,6 +1109,7 @@ struct AccountScreen: View {
                             } catch { self.error = error.localizedDescription }
                         }
                     }
+                    AccountSecurityView(api: api)
                 }
                 .padding(20)
             }
@@ -872,5 +1119,100 @@ struct AccountScreen: View {
             session = try? await api.fetchSession()
             username = session?.user?.username ?? ""
         }
+    }
+}
+
+struct AccountSecurityView: View {
+    let api: APIClient
+    @Environment(\.rcColors) private var colors
+    @State private var status: SecurityStatus?
+    @State private var error: String?
+    @State private var enrollment: AuthenticatorEnrollment?
+    @State private var code = ""
+    @State private var recovery: [String] = []
+    @State private var busy = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Security").font(.system(size: 16, weight: .semibold)).foregroundStyle(colors.fg)
+            Text("Protect your account and devices.").font(.system(size: 13)).foregroundStyle(colors.fgMuted)
+            if let error { NoticeView(text: error) }
+            if status == nil && error == nil {
+                Text("Loading security settings…").foregroundStyle(colors.fgMuted)
+            }
+            if let status {
+                Text("Authenticator app").font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
+                Text("Google Authenticator and compatible apps.").font(.system(size: 13)).foregroundStyle(colors.fgMuted)
+                RcButton(label: status.authenticatorEnabled == true ? "Disable" : "Set up", primary: false, enabled: !busy) {
+                    Task {
+                        busy = true
+                        do {
+                            if status.authenticatorEnabled == true {
+                                try await api.disableAuthenticator()
+                            } else {
+                                enrollment = try await api.enrollAuthenticator()
+                            }
+                            self.status = try await api.fetchSecurity()
+                        } catch { self.error = error.localizedDescription }
+                        busy = false
+                    }
+                }
+                if let enrollment {
+                    Text("Enter this secret in your authenticator, then confirm the six-digit code.")
+                        .font(.system(size: 13)).foregroundStyle(colors.fgMuted)
+                    Text(enrollment.secret ?? "").font(.system(size: 13, design: .monospaced)).foregroundStyle(colors.fg)
+                    RcField(label: "Setup verification code", text: $code, identifier: "authenticatorSetupCode")
+                    RcButton(label: "Enable authenticator", enabled: !busy && code.count == 6) {
+                        Task {
+                            busy = true
+                            do {
+                                let result = try await api.confirmAuthenticator(code: code)
+                                recovery = result.recoveryCodes ?? []
+                                self.enrollment = nil
+                                code = ""
+                                self.status = try await api.fetchSecurity()
+                            } catch { self.error = error.localizedDescription }
+                            busy = false
+                        }
+                    }
+                }
+                if !recovery.isEmpty {
+                    Text("Recovery codes").font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
+                    ForEach(recovery, id: \.self) { Text($0).font(.system(size: 13, design: .monospaced)).foregroundStyle(colors.fg) }
+                }
+                Text("Sessions").font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
+                ForEach(status.sessions ?? []) { session in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(session.name ?? "Session").foregroundStyle(colors.fg)
+                            if session.current == true {
+                                Text("Current session").font(.system(size: 12)).foregroundStyle(colors.successFg)
+                            }
+                        }
+                        Spacer()
+                        if session.current != true {
+                            Button("Revoke") {
+                                Task { try? await api.revokeSecuritySession(session.id); self.status = try? await api.fetchSecurity() }
+                            }.foregroundStyle(colors.dangerFg)
+                        }
+                    }
+                }
+                Text("Trusted browsers").font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
+                if status.trustedBrowsers?.isEmpty != false {
+                    Text("No trusted browsers.").font(.system(size: 13)).foregroundStyle(colors.fgMuted)
+                }
+                ForEach(status.trustedBrowsers ?? []) { browser in
+                    HStack {
+                        Text(browser.name ?? "Browser").foregroundStyle(colors.fg)
+                        Spacer()
+                        Button("Revoke") {
+                            Task { try? await api.revokeTrustedBrowser(browser.id); self.status = try? await api.fetchSecurity() }
+                        }.foregroundStyle(colors.dangerFg)
+                    }
+                }
+            }
+        }
+        .padding(.top, 20)
+        .task { status = try? await api.fetchSecurity() }
     }
 }

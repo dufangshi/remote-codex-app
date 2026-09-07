@@ -128,6 +128,7 @@ fun ThreadWebScreen(
                             ThemeMode.Dark -> "dark"
                             ThemeMode.System -> "system"
                         },
+                        autoCollapse = store.autoCollapseCompletedTurns,
                     )
                     loadDataWithBaseURL(store.relayUrl.trimEnd('/') + "/", bootstrap, "text/html", "utf-8", null)
                 }
@@ -194,6 +195,7 @@ private fun injectSession(view: WebView, store: SessionStore, deviceId: String, 
           localStorage.setItem('remote-codex-relay-token', ${jsString(store.token)});
           localStorage.setItem('remote-codex-relay-device-id', ${jsString(deviceId)});
           localStorage.setItem('remote-codex-theme-mode', ${jsString(theme)});
+          localStorage.setItem('remote-codex-auto-collapse-completed-turns', ${jsString(if (store.autoCollapseCompletedTurns) "true" else "false")});
         } catch (e) {}
     """.trimIndent()
     view.evaluateJavascript(script, null)
@@ -205,6 +207,7 @@ private fun bootstrapHtml(
     deviceId: String,
     threadId: String,
     theme: String,
+    autoCollapse: Boolean,
 ): String {
     val target = "$origin/devices/${java.net.URLEncoder.encode(deviceId, "UTF-8")}/threads/${java.net.URLEncoder.encode(threadId, "UTF-8")}?nativeApp=1"
     return """
@@ -217,6 +220,7 @@ private fun bootstrapHtml(
             localStorage.setItem('remote-codex-relay-token', ${jsString(token)});
             localStorage.setItem('remote-codex-relay-device-id', ${jsString(deviceId)});
             localStorage.setItem('remote-codex-theme-mode', ${jsString(theme)});
+            localStorage.setItem('remote-codex-auto-collapse-completed-turns', ${jsString(if (autoCollapse) "true" else "false")});
           } catch (e) {}
           location.replace(${jsString(target)});
         </script>

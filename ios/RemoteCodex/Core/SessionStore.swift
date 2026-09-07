@@ -13,6 +13,9 @@ final class SessionStore: ObservableObject {
     @Published var themeMode: ThemeMode {
         didSet { defaults.set(themeMode.rawValue, forKey: Keys.theme) }
     }
+    @Published var autoCollapseCompletedTurns: Bool {
+        didSet { defaults.set(autoCollapseCompletedTurns, forKey: Keys.autoCollapse) }
+    }
 
     private let defaults: UserDefaults
 
@@ -22,6 +25,11 @@ final class SessionStore: ObservableObject {
         self.token = defaults.string(forKey: Keys.token) ?? ""
         self.deviceId = defaults.string(forKey: Keys.device) ?? ""
         self.themeMode = ThemeMode(rawValue: defaults.string(forKey: Keys.theme) ?? "system") ?? .system
+        if defaults.object(forKey: Keys.autoCollapse) == nil {
+            self.autoCollapseCompletedTurns = true
+        } else {
+            self.autoCollapseCompletedTurns = defaults.bool(forKey: Keys.autoCollapse)
+        }
     }
 
     var hasRelayUrl: Bool { !relayUrl.isEmpty }
@@ -37,5 +45,6 @@ final class SessionStore: ObservableObject {
         static let token = "relay_token"
         static let device = "relay_device_id"
         static let theme = "theme_mode"
+        static let autoCollapse = "auto_collapse_completed_turns"
     }
 }

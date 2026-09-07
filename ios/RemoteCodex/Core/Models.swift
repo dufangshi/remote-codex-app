@@ -3,6 +3,11 @@ import Foundation
 struct ApiErrorBody: Decodable {
     let code: String?
     let message: String
+    let details: ApiErrorDetails?
+}
+
+struct ApiErrorDetails: Decodable {
+    let reason: String?
 }
 
 struct RelayUser: Codable, Equatable {
@@ -27,8 +32,64 @@ struct RelaySession: Codable {
 }
 
 struct RelayLoginResult: Decodable {
-    var token: String
+    var token: String?
+    var challengeRequired: Bool?
+    var authenticator: Bool?
+    var passkey: Bool?
     var session: RelaySession
+}
+
+struct LoginChallenge: Decodable {
+    var challengeRequired: Bool?
+    var authenticator: Bool?
+    var passkey: Bool?
+}
+
+struct SecurityStatus: Decodable {
+    var authenticatorEnabled: Bool?
+    var passkeyAvailable: Bool?
+    var recoveryCodesRemaining: Int?
+    var recentlyVerified: Bool?
+    var passkeys: [SecurityPasskey]?
+    var sessions: [SecuritySession]?
+    var trustedBrowsers: [TrustedBrowser]?
+}
+
+struct SecurityPasskey: Decodable, Identifiable {
+    var id: String
+    var name: String?
+    var createdAt: Double?
+    var lastUsedAt: Double?
+}
+
+struct SecuritySession: Decodable, Identifiable {
+    var id: String
+    var name: String?
+    var current: Bool?
+    var createdAt: Double?
+    var expiresAt: Double?
+}
+
+struct TrustedBrowser: Decodable, Identifiable {
+    var id: String
+    var name: String?
+    var createdAt: Double?
+    var expiresAt: Double?
+    var lastUsedAt: Double?
+}
+
+struct AuthenticatorEnrollment: Decodable {
+    var secret: String?
+    var uri: String?
+    var qrSvg: String?
+}
+
+struct RecoveryCodesResult: Decodable {
+    var recoveryCodes: [String]?
+}
+
+struct SetupTokenResult: Decodable {
+    var token: String
 }
 
 struct RelayRegisterResult: Decodable {
@@ -51,22 +112,43 @@ struct RelayCreateDeviceResult: Decodable {
     var token: String
 }
 
+struct RelayAccessEvent: Codable, Identifiable {
+    var id: String?
+    var username: String?
+    var kind: String?
+    var accessedAt: String?
+}
+
 struct RelayShare: Codable, Identifiable {
     var id: String
     var ownerUsername: String?
+    var targetUsername: String?
     var deviceId: String
     var deviceName: String?
     var threadId: String
     var threadTitle: String?
     var workspaceId: String?
+    var workspaceLabel: String?
+    var threadAccess: String?
+    var workspaceAccess: String?
+    var lastAccessedAt: String?
+    var accessEvents: [RelayAccessEvent]?
 }
 
 struct RelayGrant: Codable, Identifiable {
     var id: String
     var ownerUsername: String?
+    var targetUsername: String?
     var deviceId: String
     var deviceName: String?
     var threadId: String?
+    var threadTitle: String?
+    var workspaceId: String?
+    var workspaceLabel: String?
+    var threadAccess: String?
+    var workspaceAccess: String?
+    var lastAccessedAt: String?
+    var accessEvents: [RelayAccessEvent]?
 }
 
 struct RelayPortal: Decodable {

@@ -187,6 +187,7 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
           localStorage.setItem('remote-codex-relay-token', \(jsString(store.token)));
           localStorage.setItem('remote-codex-relay-device-id', \(jsString(deviceId)));
           localStorage.setItem('remote-codex-theme-mode', \(jsString(themeMode.rawValue)));
+          localStorage.setItem('remote-codex-auto-collapse-completed-turns', \(jsString(store.autoCollapseCompletedTurns ? "true" : "false")));
         } catch (e) {}
         """
     }

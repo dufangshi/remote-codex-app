@@ -44,7 +44,7 @@ struct HostedButton: UIViewRepresentable {
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
         button.setTitleColor(.white, for: .normal)
-        button.backgroundColor = UIColor(red: 0.13, green: 0.77, blue: 0.37, alpha: 1)
+        button.backgroundColor = UIColor(red: 0.92, green: 0.67, blue: 0.25, alpha: 1)
         button.layer.cornerRadius = 6
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title

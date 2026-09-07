@@ -35,6 +35,10 @@ class SessionStore(context: Context) {
             },
         ).apply()
 
+    var autoCollapseCompletedTurns: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_COLLAPSE, true)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_COLLAPSE, value).apply()
+
     val hasRelayUrl: Boolean get() = relayUrl.isNotBlank()
     val isSignedIn: Boolean get() = token.isNotBlank()
 
@@ -54,6 +58,7 @@ class SessionStore(context: Context) {
         private const val KEY_TOKEN = "relay_token"
         private const val KEY_DEVICE = "relay_device_id"
         private const val KEY_THEME = "theme_mode"
+        private const val KEY_AUTO_COLLAPSE = "auto_collapse_completed_turns"
     }
 }
 

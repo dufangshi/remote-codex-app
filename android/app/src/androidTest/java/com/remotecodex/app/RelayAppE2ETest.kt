@@ -89,11 +89,14 @@ class RelayAppE2ETest {
         }
 
         val created = env.startThreadAndPrompt()
-        compose.onNodeWithTag("Open Navigation").performClick()
-        compose.waitUntil(5_000) {
-            compose.onAllNodesWithTag("Workspaces").fetchSemanticsNodes().isNotEmpty()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("Back to workspaces").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("Workspaces").performClick()
+        compose.onNodeWithTag("Back to workspaces").performClick()
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithTag(workspaceTag).fetchSemanticsNodes().isNotEmpty() ||
+                compose.onAllNodesWithText("Workspaces").fetchSemanticsNodes().isNotEmpty()
+        }
 
         device.openNotification()
         assertTrue(

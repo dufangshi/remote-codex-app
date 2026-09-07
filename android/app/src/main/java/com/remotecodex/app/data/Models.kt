@@ -45,8 +45,72 @@ data class RelaySession(
 
 @Serializable
 data class RelayLoginResult(
+    val token: String? = null,
+    val challengeRequired: Boolean = false,
+    val authenticator: Boolean = false,
+    val passkey: Boolean = false,
+    val session: RelaySession = RelaySession(),
+)
+
+@Serializable
+data class LoginChallenge(
+    val challengeRequired: Boolean = true,
+    val authenticator: Boolean = false,
+    val passkey: Boolean = false,
+)
+
+@Serializable
+data class SecurityStatus(
+    val authenticatorEnabled: Boolean = false,
+    val passkeyAvailable: Boolean = false,
+    val recoveryCodesRemaining: Int = 0,
+    val recentlyVerified: Boolean = false,
+    val passkeys: List<SecurityPasskey> = emptyList(),
+    val sessions: List<SecuritySession> = emptyList(),
+    val trustedBrowsers: List<TrustedBrowser> = emptyList(),
+)
+
+@Serializable
+data class SecurityPasskey(
+    val id: String,
+    val name: String = "",
+    val createdAt: Long = 0,
+    val lastUsedAt: Long? = null,
+)
+
+@Serializable
+data class SecuritySession(
+    val id: String,
+    val name: String = "",
+    val current: Boolean = false,
+    val createdAt: Long = 0,
+    val expiresAt: Long = 0,
+)
+
+@Serializable
+data class TrustedBrowser(
+    val id: String,
+    val name: String = "",
+    val createdAt: Long = 0,
+    val expiresAt: Long = 0,
+    val lastUsedAt: Long = 0,
+)
+
+@Serializable
+data class AuthenticatorEnrollment(
+    val secret: String = "",
+    val uri: String = "",
+    val qrSvg: String = "",
+)
+
+@Serializable
+data class RecoveryCodesResult(
+    val recoveryCodes: List<String> = emptyList(),
+)
+
+@Serializable
+data class SetupTokenResult(
     val token: String,
-    val session: RelaySession,
 )
 
 @Serializable
@@ -89,6 +153,16 @@ data class RelayShare(
     val workspaceLabel: String? = null,
     val threadAccess: String = "read",
     val workspaceAccess: String = "none",
+    val lastAccessedAt: String? = null,
+    val accessEvents: List<RelayAccessEvent> = emptyList(),
+)
+
+@Serializable
+data class RelayAccessEvent(
+    val id: String = "",
+    val username: String = "",
+    val kind: String = "",
+    val accessedAt: String = "",
 )
 
 @Serializable
@@ -106,6 +180,8 @@ data class RelayGrant(
     val threadAccess: String = "read",
     val workspaceAccess: String = "none",
     val canCreateThreads: Boolean = false,
+    val lastAccessedAt: String? = null,
+    val accessEvents: List<RelayAccessEvent> = emptyList(),
 )
 
 @Serializable
