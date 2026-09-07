@@ -1,6 +1,64 @@
 import SwiftUI
 import UIKit
 
+struct ScreenEdgeBackSwipe: UIViewRepresentable {
+    var enabled: Bool
+    var onBack: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onBack: onBack)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = EdgeBackView()
+        view.isUserInteractionEnabled = false
+        let gesture = UIScreenEdgePanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handle))
+        gesture.edges = .left
+        view.edgeGesture = gesture
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.onBack = onBack
+        context.coordinator.enabled = enabled
+        guard let view = view as? EdgeBackView else { return }
+        if enabled {
+            view.attach(to: view.window)
+        }
+    }
+
+    final class Coordinator {
+        var onBack: () -> Void
+        var enabled = true
+        init(onBack: @escaping () -> Void) { self.onBack = onBack }
+
+        @objc func handle(_ gesture: UIScreenEdgePanGestureRecognizer) {
+            guard enabled, gesture.state == .ended else { return }
+            let translation = gesture.translation(in: gesture.view)
+            if translation.x > 48 {
+                onBack()
+            }
+        }
+    }
+}
+
+private final class EdgeBackView: UIView {
+    var edgeGesture: UIScreenEdgePanGestureRecognizer?
+
+    func attach(to window: UIWindow?) {
+        guard let gesture = edgeGesture else { return }
+        if let window, gesture.view !== window {
+            gesture.view?.removeGestureRecognizer(gesture)
+            window.addGestureRecognizer(gesture)
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        attach(to: window)
+    }
+}
+
 struct RcButton: View {
     let label: String
     var primary = true

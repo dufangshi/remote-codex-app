@@ -102,7 +102,13 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         loadedKey = key
         interceptLeaves = false
 
-        let script = WKUserScript(source: Self.injectionJS(store: store, deviceId: deviceId, themeMode: themeMode), injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        let scriptSource = Self.injectionJS(store: store, deviceId: deviceId, themeMode: themeMode)
+        let script: WKUserScript
+        if #available(iOS 14.0, *) {
+            script = WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page)
+        } else {
+            script = WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        }
         let controller = WKUserContentController()
         controller.addUserScript(script)
         let config = WKWebViewConfiguration()
@@ -116,7 +122,7 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         webView?.removeFromSuperview()
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self
-        web.allowsBackForwardNavigationGestures = true
+        web.allowsBackForwardNavigationGestures = false
         web.isOpaque = false
         web.backgroundColor = .clear
         web.accessibilityIdentifier = "threadWebView"
@@ -240,14 +246,81 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
           { mode: 'relay', relayApiBase: '/relay' },
           window.__REMOTE_CODEX_BOOTSTRAP__ || {}
         );
-        try {
-          document.cookie = 'remote_codex_relay_session=' + \(jsString(store.token)) + '; path=/; SameSite=Lax\(secure)';
-          localStorage.setItem('remote-codex-relay-mode', 'true');
-          localStorage.removeItem('remote-codex-relay-token');
-          localStorage.setItem('remote-codex-relay-device-id', \(jsString(deviceId)));
-          localStorage.setItem('remote-codex-theme-mode', \(jsString(themeMode.rawValue)));
-          localStorage.setItem('remote-codex-auto-collapse-completed-turns', \(jsString(store.autoCollapseCompletedTurns ? "true" : "false")));
-        } catch (e) {}
+        (function () {
+          var token = \(jsString(store.token));
+          try {
+            document.cookie = 'remote_codex_relay_session=' + token + '; path=/; SameSite=Lax\(secure)';
+            localStorage.setItem('remote-codex-relay-mode', 'true');
+            localStorage.removeItem('remote-codex-relay-token');
+            localStorage.setItem('remote-codex-relay-device-id', \(jsString(deviceId)));
+            localStorage.setItem('remote-codex-theme-mode', \(jsString(themeMode.rawValue)));
+            localStorage.setItem('remote-codex-auto-collapse-completed-turns', \(jsString(store.autoCollapseCompletedTurns ? "true" : "false")));
+          } catch (e) {}
+          try {
+            var origFetch = window.fetch.bind(window);
+            window.fetch = function (input, init) {
+              try {
+                if (token && input instanceof Request) {
+                  if (!input.headers.has('Authorization')) {
+                    var headers = new Headers(input.headers);
+                    headers.set('Authorization', 'Bearer ' + token);
+                    return origFetch(new Request(input, { headers: headers }));
+                  }
+                  return origFetch(input);
+                }
+                var nextHeaders = new Headers((init && init.headers) || {});
+                if (token && !nextHeaders.has('Authorization')) {
+                  nextHeaders.set('Authorization', 'Bearer ' + token);
+                }
+                return origFetch(input, Object.assign({}, init || {}, {
+                  headers: nextHeaders,
+                  credentials: (init && init.credentials) || 'same-origin'
+                }));
+              } catch (err) {
+                return origFetch(input, init);
+              }
+            };
+          } catch (e) {}
+          try {
+            var fake = { postMessage: function () {}, scriptURL: (location.origin || '') + '/', state: 'activated' };
+            var dummyReg = {
+              installing: null,
+              waiting: null,
+              active: fake,
+              scope: (location.origin || '') + '/',
+              update: function () { return Promise.resolve(); },
+              unregister: function () { return Promise.resolve(true); }
+            };
+            if (!('serviceWorker' in navigator) || !navigator.serviceWorker) {
+              Object.defineProperty(navigator, 'serviceWorker', {
+                configurable: true,
+                value: {
+                  controller: fake,
+                  ready: Promise.resolve(dummyReg),
+                  register: function () { return Promise.resolve(dummyReg); },
+                  getRegistration: function () { return Promise.resolve(dummyReg); },
+                  getRegistrations: function () { return Promise.resolve([]); },
+                  addEventListener: function () {},
+                  removeEventListener: function () {},
+                  startMessages: function () {}
+                }
+              });
+            } else {
+              var sw = navigator.serviceWorker;
+              if (typeof sw.register === 'function') {
+                var origRegister = sw.register.bind(sw);
+                sw.register = function () {
+                  return origRegister.apply(null, arguments).catch(function () { return dummyReg; });
+                };
+              }
+              if (!sw.controller) {
+                try {
+                  Object.defineProperty(sw, 'controller', { configurable: true, get: function () { return fake; } });
+                } catch (e) {}
+              }
+            }
+          } catch (e) {}
+        })();
         """
     }
 

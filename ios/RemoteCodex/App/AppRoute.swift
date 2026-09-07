@@ -51,6 +51,8 @@ final class NavController: ObservableObject {
         current = route
     }
 
+    var canSwipeBack: Bool { stack.count > 1 }
+
     func pop() {
         if stack.count > 1 { stack.removeLast() }
         current = stack.last ?? .connect

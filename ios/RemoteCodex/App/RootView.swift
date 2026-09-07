@@ -48,6 +48,10 @@ struct RootView: View {
             if navOpen { navMenu }
             if accountOpen { accountMenu }
             if settingsOpen { settingsSheet }
+            ScreenEdgeBackSwipe(enabled: nav.canSwipeBack) {
+                nav.back()
+            }
+            .allowsHitTesting(false)
         }
         .environment(\.rcColors, colors)
         .preferredColorScheme(store.themeMode == .system ? nil : (store.themeMode == .dark ? .dark : .light))
