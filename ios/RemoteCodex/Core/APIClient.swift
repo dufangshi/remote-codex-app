@@ -94,6 +94,56 @@ final class APIClient {
         let _: [String: String] = try await request("/relay/shares/\(enc(id))", method: "DELETE")
     }
 
+    func createGrant(
+        deviceId: String,
+        targetIdentifier: String,
+        label: String,
+        threadAccess: String,
+        workspaceAccess: String,
+        canCreateThreads: Bool
+    ) async throws -> RelayGrant {
+        var body: [String: Any] = [
+            "targetIdentifier": targetIdentifier,
+            "deviceId": deviceId,
+            "scope": "device",
+            "threadAccess": threadAccess,
+            "workspaceAccess": workspaceAccess,
+            "canCreateThreads": canCreateThreads,
+        ]
+        if !label.isEmpty { body["label"] = label }
+        return try await request("/relay/grants", method: "POST", body: body)
+    }
+
+    func updateGrant(
+        id: String,
+        threadAccess: String,
+        workspaceAccess: String,
+        canCreateThreads: Bool,
+        label: String?
+    ) async throws -> RelayGrant {
+        var body: [String: Any] = [
+            "threadAccess": threadAccess,
+            "workspaceAccess": workspaceAccess,
+            "canCreateThreads": canCreateThreads,
+        ]
+        if let label { body["label"] = label }
+        return try await request("/relay/grants/\(enc(id))", method: "PATCH", body: body)
+    }
+
+    func updateShare(
+        id: String,
+        threadAccess: String,
+        workspaceAccess: String,
+        label: String?
+    ) async throws -> RelayShare {
+        var body: [String: Any] = [
+            "threadAccess": threadAccess,
+            "workspaceAccess": workspaceAccess,
+        ]
+        if let label { body["label"] = label }
+        return try await request("/relay/shares/\(enc(id))", method: "PATCH", body: body)
+    }
+
     func register(email: String, username: String, password: String, registrationPassword: String?) async throws -> RelayRegisterResult {
         var body: [String: Any] = ["email": email, "username": username, "password": password]
         if let registrationPassword, !registrationPassword.isEmpty {

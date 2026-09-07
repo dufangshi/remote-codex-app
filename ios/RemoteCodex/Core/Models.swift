@@ -104,6 +104,8 @@ struct RelayDevice: Codable, Identifiable, Equatable {
     var token: String?
     var tokenPreview: String?
     var connected: Bool?
+    var connectedAt: String?
+    var lastHeartbeatAt: String?
     var hostedStatus: String?
 }
 
@@ -129,6 +131,7 @@ struct RelayShare: Codable, Identifiable {
     var threadTitle: String?
     var workspaceId: String?
     var workspaceLabel: String?
+    var label: String?
     var threadAccess: String?
     var workspaceAccess: String?
     var lastAccessedAt: String?
@@ -141,12 +144,15 @@ struct RelayGrant: Codable, Identifiable {
     var targetUsername: String?
     var deviceId: String
     var deviceName: String?
+    var scope: String?
     var threadId: String?
     var threadTitle: String?
     var workspaceId: String?
     var workspaceLabel: String?
+    var label: String?
     var threadAccess: String?
     var workspaceAccess: String?
+    var canCreateThreads: Bool?
     var lastAccessedAt: String?
     var accessEvents: [RelayAccessEvent]?
 }

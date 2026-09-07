@@ -444,6 +444,18 @@ struct DevicesScreen: View {
     @State private var created: String?
     @State private var autoConnected = false
     @State private var sharedTab = 0
+    @State private var copiedDeviceId: String?
+    @State private var copyError: String?
+    @State private var deleting: RelayDevice?
+    @State private var rotating: RelayDevice?
+    @State private var sharing: RelayDevice?
+    @State private var editingGrant: RelayGrant?
+    @State private var editingShare: RelayShare?
+    @State private var revokingGrant: RelayGrant?
+    @State private var revokingShare: RelayShare?
+    @State private var expandedId: String?
+    @State private var dialogError: String?
+    @State private var busy = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -486,43 +498,18 @@ struct DevicesScreen: View {
                     if let created { NoticeView(text: "Device created. Copy the one-time token now.\n\(created)", tone: .accent) }
                     VStack(spacing: 0) {
                         ForEach(portal?.devices ?? []) { device in
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    StatusDot(online: device.connected == true)
-                                    Text(device.name)
-                                        .foregroundStyle(colors.fg)
-                                        .font(.system(size: 14, weight: .medium))
-                                        .accessibilityIdentifier("device-\(device.id)")
-                                }
-                                Text(device.tokenPreview ?? "").font(.system(size: 12, design: .monospaced)).foregroundStyle(colors.fgMuted)
-                                Text(deviceStatusText(device)).font(.system(size: 12)).foregroundStyle(colors.fgMuted)
-                                Text(store.relayUrl.hasPrefix("https://") ? "Device connection uses HTTPS" : "Connection is not end-to-end encrypted")
-                                    .font(.system(size: 11)).foregroundStyle(store.relayUrl.hasPrefix("https://") ? colors.successFg : colors.fgMuted)
-                                HStack {
-                                    RcButton(
-                                        label: device.hostedStatus == "stopped" ? "Start & connect" : "Connect",
-                                        enabled: device.connected == true || (device.hostedStatus != nil && device.hostedStatus != "stopping" && device.hostedStatus != "deleting"),
-                                        identifier: "connectDevice-\(device.id)"
-                                    ) {
-                                        onConnect(device)
-                                    }
-                                    Button("Copy Unix setup") {
-                                        Task {
-                                            if let token = try? await api.fetchSetupToken(deviceId: device.id).token {
-                                                UIPasteboard.general.string = unixSetup(relayUrl: store.relayUrl, token: token)
-                                            }
-                                        }
-                                    }
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(colors.fg)
-                                    Button("Delete") {
-                                        Task { try? await api.deleteDevice(device.id); portal = try? await api.fetchPortal() }
-                                    }
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(colors.dangerFg)
-                                }
-                            }
-                            .padding(12)
+                            DeviceRowView(
+                                device: device,
+                                relayHttps: store.relayUrl.hasPrefix("https://"),
+                                copied: copiedDeviceId == device.id,
+                                copyError: copyError,
+                                onConnect: { onConnect(device) },
+                                onCopyUnix: { copySetup(device, windows: false) },
+                                onCopyWindows: { copySetup(device, windows: true) },
+                                onShare: { dialogError = nil; sharing = device },
+                                onRotate: { rotating = device },
+                                onDelete: { deleting = device }
+                            )
                             Rectangle().fill(colors.border).frame(height: 1)
                         }
                         if !loading && (portal?.devices.isEmpty ?? true) {
@@ -537,27 +524,17 @@ struct DevicesScreen: View {
                     .accessibilityIdentifier("deviceList")
                     Text("Shared access").font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
                     Text("Access you received and access you granted.").font(.system(size: 13)).foregroundStyle(colors.fgMuted)
-                    let tabs: [(String, Int)] = [
-                        ("Threads with me", portal?.sharedWithMe?.count ?? 0),
-                        ("Devices with me", portal?.sharedDevicesWithMe?.count ?? 0),
-                        ("Devices by me", portal?.grantsByMe?.count ?? 0),
-                        ("Threads by me", portal?.sharedByMe?.count ?? 0),
-                    ]
-                    HStack {
-                        ForEach(tabs.indices, id: \.self) { index in
-                            Button {
-                                sharedTab = index
-                            } label: {
-                                Text("\(tabs[index].0) \(tabs[index].1)")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 10)
-                                    .background(sharedTab == index ? colors.panel : colors.surface)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                                    .foregroundStyle(sharedTab == index ? colors.fg : colors.fgMuted)
-                            }
-                        }
-                    }
+                    let incomingDevices = Dictionary(grouping: portal?.sharedDevicesWithMe ?? [], by: \.deviceId)
+                    let outgoingDevices = Dictionary(grouping: portal?.grantsByMe ?? [], by: \.deviceId)
+                    SharedAccessTabs(
+                        tabs: [
+                            ("Threads with me", portal?.sharedWithMe?.count ?? 0),
+                            ("Devices with me", incomingDevices.count),
+                            ("Devices by me", outgoingDevices.count),
+                            ("Threads by me", portal?.sharedByMe?.count ?? 0),
+                        ],
+                        selected: $sharedTab
+                    )
                     sharedAccessList
                 }
                 .padding(20)
@@ -566,6 +543,115 @@ struct DevicesScreen: View {
         .background(colors.appBg)
         .onAppear {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
+        .overlay {
+            if let deleting {
+                ConfirmDialog(
+                    title: "Delete relay device",
+                    description: "Delete \(deleting.name)? Its device token will stop working immediately. This cannot be undone.",
+                    confirmLabel: "Delete device",
+                    busy: busy,
+                    onConfirm: {
+                        busy = true
+                        Task {
+                            do {
+                                try await api.deleteDevice(deleting.id)
+                                portal = try? await api.fetchPortal()
+                                self.deleting = nil
+                            } catch {
+                                self.error = error.localizedDescription
+                            }
+                            busy = false
+                        }
+                    },
+                    onCancel: { self.deleting = nil }
+                )
+            }
+            if let rotating {
+                ConfirmDialog(
+                    title: "Replace device token?",
+                    description: "The current connection will close. Update the device setup with the new token to reconnect. Existing workspaces and threads are kept.",
+                    confirmLabel: "Replace token",
+                    busy: busy,
+                    onConfirm: {
+                        busy = true
+                        Task {
+                            if let result = try? await api.rotateDeviceToken(deviceId: rotating.id) {
+                                created = result.token
+                                self.rotating = nil
+                                portal = try? await api.fetchPortal()
+                            }
+                            busy = false
+                        }
+                    },
+                    onCancel: { self.rotating = nil }
+                )
+            }
+            if let sharing {
+                ShareDeviceSheet(
+                    deviceName: sharing.name,
+                    busy: busy,
+                    error: dialogError,
+                    onShare: { target, label, threadAccess, workspaceAccess, canCreate in
+                        busy = true
+                        dialogError = nil
+                        Task {
+                            do {
+                                _ = try await api.createGrant(
+                                    deviceId: sharing.id,
+                                    targetIdentifier: target,
+                                    label: label,
+                                    threadAccess: threadAccess,
+                                    workspaceAccess: workspaceAccess,
+                                    canCreateThreads: canCreate
+                                )
+                                self.sharing = nil
+                                portal = try? await api.fetchPortal()
+                            } catch {
+                                dialogError = error.localizedDescription
+                            }
+                            busy = false
+                        }
+                    },
+                    onClose: { self.sharing = nil; dialogError = nil }
+                )
+            }
+            if let revokingGrant {
+                ConfirmDialog(
+                    title: "Revoke shared device access",
+                    description: "Revoke access for \(revokingGrant.targetUsername ?? "this user") on \(revokingGrant.deviceName ?? "this device")?",
+                    confirmLabel: "Revoke",
+                    busy: busy,
+                    onConfirm: {
+                        busy = true
+                        Task {
+                            try? await api.revokeGrant(revokingGrant.id)
+                            self.revokingGrant = nil
+                            portal = try? await api.fetchPortal()
+                            busy = false
+                        }
+                    },
+                    onCancel: { self.revokingGrant = nil }
+                )
+            }
+            if let revokingShare {
+                ConfirmDialog(
+                    title: "Revoke shared thread access",
+                    description: "Revoke access for \(revokingShare.targetUsername ?? "this user") on \(revokingShare.threadTitle ?? "this thread")?",
+                    confirmLabel: "Revoke",
+                    busy: busy,
+                    onConfirm: {
+                        busy = true
+                        Task {
+                            try? await api.revokeShare(revokingShare.id)
+                            self.revokingShare = nil
+                            portal = try? await api.fetchPortal()
+                            busy = false
+                        }
+                    },
+                    onCancel: { self.revokingShare = nil }
+                )
+            }
         }
         .task {
             while !Task.isCancelled {
@@ -586,96 +672,108 @@ struct DevicesScreen: View {
     private var sharedAccessList: some View {
         switch sharedTab {
         case 0:
-            ForEach(portal?.sharedWithMe ?? []) { share in
-                Button {
-                    onOpenThread(share.deviceId, share.threadId, share.workspaceId)
-                } label: {
-                    VStack(alignment: .leading) {
-                        Text(share.threadTitle ?? "Thread").foregroundStyle(colors.fg)
-                        Text("\(share.deviceName ?? "") · \(share.ownerUsername ?? "")").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(colors.panel)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            }
-            if portal?.sharedWithMe?.isEmpty != false {
-                Text("No sessions have been shared with this account yet.").foregroundStyle(colors.fgMuted).padding(12)
-            }
+            shareCards(portal?.sharedWithMe ?? [], incoming: true, empty: "No sessions have been shared with this account yet.")
         case 1:
-            ForEach(portal?.sharedDevicesWithMe ?? []) { grant in
-                Button { onOpenDevice(grant.deviceId) } label: {
-                    VStack(alignment: .leading) {
-                        Text(grant.deviceName ?? "Device").foregroundStyle(colors.fg)
-                        Text(grant.ownerUsername ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(colors.panel)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            }
-            if portal?.sharedDevicesWithMe?.isEmpty != false {
-                Text("No devices have been shared with this account yet.").foregroundStyle(colors.fgMuted).padding(12)
-            }
+            grantCards(portal?.sharedDevicesWithMe ?? [], incoming: true, empty: "No devices have been shared with this account yet.")
         case 2:
-            ForEach(portal?.grantsByMe ?? []) { grant in
-                Button { onOpenDevice(grant.deviceId) } label: {
-                    VStack(alignment: .leading) {
-                        Text(grant.deviceName ?? "Device").foregroundStyle(colors.fg)
-                        Text(grant.targetUsername ?? "Shared").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(colors.panel)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            }
-            if portal?.grantsByMe?.isEmpty != false {
-                Text("No devices have been shared by this account yet.").foregroundStyle(colors.fgMuted).padding(12)
-            }
+            grantCards(portal?.grantsByMe ?? [], incoming: false, empty: "No devices have been shared by this account yet.")
         default:
-            ForEach(portal?.sharedByMe ?? []) { share in
-                Button {
-                    onOpenThread(share.deviceId, share.threadId, share.workspaceId)
-                } label: {
-                    VStack(alignment: .leading) {
-                        Text(share.threadTitle ?? "Thread").foregroundStyle(colors.fg)
-                        Text(share.deviceName ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(colors.panel)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            shareCards(portal?.sharedByMe ?? [], incoming: false, empty: "No threads have been shared by this account yet.")
+        }
+    }
+
+    @ViewBuilder
+    private func shareCards(_ shares: [RelayShare], incoming: Bool, empty: String) -> some View {
+        if shares.isEmpty {
+            Text(empty).foregroundStyle(colors.fgMuted).padding(12)
+        } else {
+            VStack(spacing: 0) {
+                ForEach(shares) { share in
+                    SharedAccessCardView(
+                        title: share.threadTitle ?? "Thread",
+                        subtitle: [share.workspaceLabel, share.deviceName].compactMap { $0 }.joined(separator: " · "),
+                        username: incoming ? (share.ownerUsername ?? "") : (share.targetUsername ?? ""),
+                        incoming: incoming,
+                        permissions: permissionLabels(threadAccess: share.threadAccess, workspaceAccess: share.workspaceAccess),
+                        lastAccessedAt: share.lastAccessedAt,
+                        events: (share.accessEvents ?? []).map { ("\($0.username ?? "") \($0.kind ?? "")", formatRelayTime($0.accessedAt)) },
+                        expanded: expandedId == share.id,
+                        onOpen: { onOpenThread(share.deviceId, share.threadId, share.workspaceId) },
+                        onEdit: incoming ? nil : { editingShare = share },
+                        onRevoke: incoming ? nil : { revokingShare = share },
+                        onToggleHistory: incoming ? nil : { expandedId = expandedId == share.id ? nil : share.id }
+                    )
+                    Rectangle().fill(colors.border).frame(height: 1)
                 }
             }
-            if portal?.sharedByMe?.isEmpty != false {
-                Text("No threads have been shared by this account yet.").foregroundStyle(colors.fgMuted).padding(12)
+            .background(colors.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
+        }
+    }
+
+    @ViewBuilder
+    private func grantCards(_ grants: [RelayGrant], incoming: Bool, empty: String) -> some View {
+        if grants.isEmpty {
+            Text(empty).foregroundStyle(colors.fgMuted).padding(12)
+        } else {
+            let groups = Dictionary(grouping: grants, by: \.deviceId)
+            VStack(spacing: 0) {
+                ForEach(Array(groups.keys), id: \.self) { deviceId in
+                    let items = groups[deviceId] ?? []
+                    HStack {
+                        Text(items.first?.deviceName ?? "Device")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(colors.fg)
+                        Spacer()
+                        Text("\(items.count) \(items.count == 1 ? "share" : "shares")")
+                            .font(.system(size: 11))
+                            .foregroundStyle(colors.fgMuted)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(colors.muted)
+                            .clipShape(Capsule())
+                    }
+                    .padding(12)
+                    Rectangle().fill(colors.border).frame(height: 1)
+                    ForEach(items) { grant in
+                        SharedAccessCardView(
+                            title: grant.label?.isEmpty == false ? grant.label! : (grant.threadTitle ?? grant.workspaceLabel ?? grant.deviceName ?? "Device"),
+                            subtitle: [grant.scope?.capitalized, grant.workspaceLabel ?? grant.deviceName].compactMap { $0 }.joined(separator: " · "),
+                            username: incoming ? (grant.ownerUsername ?? "") : (grant.targetUsername ?? ""),
+                            incoming: incoming,
+                            permissions: permissionLabels(threadAccess: grant.threadAccess, workspaceAccess: grant.workspaceAccess, canCreate: grant.canCreateThreads == true),
+                            lastAccessedAt: grant.lastAccessedAt,
+                            events: (grant.accessEvents ?? []).map { ("\($0.username ?? "") \($0.kind ?? "")", formatRelayTime($0.accessedAt)) },
+                            expanded: expandedId == grant.id,
+                            onOpen: { onOpenDevice(grant.deviceId) },
+                            onEdit: incoming ? nil : { editingGrant = grant },
+                            onRevoke: incoming ? nil : { revokingGrant = grant },
+                            onToggleHistory: incoming ? nil : { expandedId = expandedId == grant.id ? nil : grant.id }
+                        )
+                        Rectangle().fill(colors.border).frame(height: 1)
+                    }
+                }
+            }
+            .background(colors.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
+        }
+    }
+
+    private func copySetup(_ device: RelayDevice, windows: Bool) {
+        Task {
+            do {
+                let token = try await api.fetchSetupToken(deviceId: device.id).token
+                UIPasteboard.general.string = supervisorSetup(relayUrl: store.relayUrl, token: token, windows: windows)
+                copiedDeviceId = device.id
+                copyError = nil
+            } catch {
+                copyError = error.localizedDescription
+                copiedDeviceId = nil
             }
         }
     }
-
-    private func deviceStatusText(_ device: RelayDevice) -> String {
-        if device.hostedStatus == "stopped" { return "Stopped. Connect to wake this VM." }
-        if let hosted = device.hostedStatus, hosted != "online" {
-            return "Hosted: \(hosted). The hosted supervisor is not ready yet."
-        }
-        if device.connected == true { return "Online. Connected time unavailable." }
-        return "No heartbeat recorded."
-    }
-}
-
-private func unixSetup(relayUrl: String, token: String) -> String {
-    let ws = relayUrl.hasPrefix("https://")
-        ? "wss://" + relayUrl.dropFirst("https://".count)
-        : "ws://" + relayUrl.dropFirst("http://".count)
-    return """
-    REMOTE_CODEX_RELAY_SERVER_URL=\(ws) \\
-    REMOTE_CODEX_RELAY_AGENT_TOKEN=\(token) \\
-    REMOTE_CODEX_RELAY_SUPERVISOR_PORT=45679 \\
-    remote-codex relay-supervisor
-    """
 }
 
 struct WorkspacesScreen: View {
@@ -695,6 +793,9 @@ struct WorkspacesScreen: View {
     @State private var loading = true
     @State private var finishedThread: ThreadSummary?
     @State private var watchCount = 0
+    @State private var renaming: Workspace?
+    @State private var renameValue = ""
+    @State private var deleting: Workspace?
     private static var seenThreadIds: Set<String> = []
     private static var watchPrimed = false
 
@@ -754,17 +855,39 @@ struct WorkspacesScreen: View {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(workspaces) { workspace in
-                        Button { onOpen(workspace) } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(workspace.label).font(.system(size: 15, weight: .semibold)).foregroundStyle(colors.fg)
-                                Text(workspace.absPath ?? "").font(.system(size: 12, design: .monospaced)).foregroundStyle(colors.fgMuted)
-                                Text(workspace.lastOpenedAt == nil ? "Not opened yet" : "Opened \(workspace.lastOpenedAt ?? "")")
-                                    .font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                        HStack(alignment: .center, spacing: 4) {
+                            Button { onOpen(workspace) } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(workspace.label).font(.system(size: 15, weight: .semibold)).foregroundStyle(colors.fg)
+                                    Text(workspace.absPath ?? "").font(.system(size: 12, design: .monospaced)).foregroundStyle(colors.fgMuted)
+                                    Text(workspace.lastOpenedAt == nil ? "Not opened yet" : "Opened \(formatRelayTime(workspace.lastOpenedAt))")
+                                        .font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                                }
+                                .padding(16)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .padding(16)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("workspace-\(workspace.id)")
+                            Button {
+                                Task {
+                                    if let updated = try? await api.favoriteWorkspace(deviceId: deviceId, workspaceId: workspace.id, favorite: !(workspace.isFavorite ?? false)) {
+                                        workspaces = workspaces.map { $0.id == updated.id ? updated : $0 }
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "pin.fill")
+                                    .rotationEffect(.degrees((workspace.isFavorite ?? false) ? 18 : 8))
+                                    .foregroundStyle((workspace.isFavorite ?? false) ? colors.warningFg : colors.fgMuted)
+                            }
+                            .accessibilityLabel((workspace.isFavorite ?? false) ? "Unpin \(workspace.label)" : "Pin \(workspace.label)")
+                            Menu {
+                                Button("Rename") { renaming = workspace; renameValue = workspace.label }
+                                Button("Delete", role: .destructive) { deleting = workspace }
+                            } label: {
+                                Image(systemName: "ellipsis").foregroundStyle(colors.fgMuted).frame(width: 36, height: 36)
+                            }
+                            .accessibilityLabel("Workspace actions")
+                            .padding(.trailing, 8)
                         }
-                        .accessibilityIdentifier("workspace-\(workspace.id)")
                         Rectangle().fill(colors.border).frame(height: 1)
                     }
                 }
@@ -776,8 +899,39 @@ struct WorkspacesScreen: View {
             }
         }
         .background(colors.appBg)
+        .overlay {
+            if renaming != nil {
+                PromptDialog(title: "Rename workspace", label: "Label", value: $renameValue, onSubmit: {
+                    guard let workspace = renaming else { return }
+                    Task {
+                        if let updated = try? await api.renameWorkspace(deviceId: deviceId, workspaceId: workspace.id, label: renameValue.trimmingCharacters(in: .whitespaces)) {
+                            workspaces = workspaces.map { $0.id == updated.id ? updated : $0 }
+                            renaming = nil
+                        }
+                    }
+                }, onCancel: { renaming = nil })
+            }
+            if let deleting {
+                ConfirmDialog(
+                    title: "Delete workspace",
+                    description: "Delete \(deleting.label)? Threads in this workspace will also be removed from the supervisor list.",
+                    confirmLabel: "Delete workspace",
+                    onConfirm: {
+                        Task {
+                            try? await api.deleteWorkspace(deviceId: deviceId, workspace: deleting)
+                            workspaces.removeAll { $0.id == deleting.id }
+                            self.deleting = nil
+                        }
+                    },
+                    onCancel: { self.deleting = nil }
+                )
+            }
+        }
         .task {
-            workspaces = (try? await api.fetchWorkspaces(deviceId: deviceId)) ?? []
+            workspaces = ((try? await api.fetchWorkspaces(deviceId: deviceId)) ?? []).sorted {
+                if ($0.isFavorite ?? false) != ($1.isFavorite ?? false) { return ($0.isFavorite ?? false) && !($1.isFavorite ?? false) }
+                return ($0.lastOpenedAt ?? $0.createdAt ?? "") > ($1.lastOpenedAt ?? $1.createdAt ?? "")
+            }
             runtime = try? await api.fetchRuntime(deviceId: deviceId)
             loading = false
             if !Self.watchPrimed {
@@ -817,6 +971,9 @@ struct ThreadsScreen: View {
     @State private var threads: [ThreadSummary] = []
     @State private var workspace: Workspace?
     @State private var loading = true
+    @State private var renaming: ThreadSummary?
+    @State private var renameValue = ""
+    @State private var deleting: ThreadSummary?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -847,27 +1004,69 @@ struct ThreadsScreen: View {
                         Text("Recent Threads").font(.system(size: 14, weight: .semibold)).foregroundStyle(colors.fg)
                     }
                     ForEach(threads) { thread in
-                        Button { onOpen(thread) } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(thread.title ?? "Thread").foregroundStyle(colors.fg).font(.system(size: 14, weight: .medium))
-                                HStack {
-                                    Text(thread.updatedAt ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
-                                    if thread.status != "idle" { Text(thread.status ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted) }
+                        HStack(spacing: 8) {
+                            Button { onOpen(thread) } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(thread.title ?? "Thread").foregroundStyle(colors.fg).font(.system(size: 14, weight: .medium))
+                                    HStack {
+                                        Text(formatRelayTime(thread.updatedAt)).font(.system(size: 12)).foregroundStyle(colors.fgMuted)
+                                        if thread.status != "idle" { Text(thread.status ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted) }
+                                    }
                                 }
+                                .padding(16)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .padding(16)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(colors.panel)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(colors.border, lineWidth: 1))
+                            .accessibilityIdentifier("thread-\(thread.id)")
+                            Button {
+                                renaming = thread
+                                renameValue = thread.title ?? ""
+                            } label: {
+                                Text("✎").foregroundStyle(colors.fgMuted)
+                            }
+                            .accessibilityLabel("Rename thread \(thread.title ?? "")")
+                            Button { deleting = thread } label: {
+                                Image(systemName: "trash").foregroundStyle(colors.fgMuted)
+                            }
+                            .accessibilityLabel("Delete thread \(thread.title ?? "")")
+                            .padding(.trailing, 8)
                         }
-                        .accessibilityIdentifier("thread-\(thread.id)")
+                        .background(colors.panel)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(colors.border, lineWidth: 1))
                     }
                 }
                 .padding(16)
             }
         }
         .background(colors.appBg)
+        .overlay {
+            if renaming != nil {
+                PromptDialog(title: "Rename Thread", label: "Thread Title", value: $renameValue, onSubmit: {
+                    guard let thread = renaming else { return }
+                    Task {
+                        if let updated = try? await api.renameThread(deviceId: deviceId, threadId: thread.id, title: renameValue.trimmingCharacters(in: .whitespaces)) {
+                            threads = threads.map { $0.id == updated.id ? updated : $0 }
+                            renaming = nil
+                        }
+                    }
+                }, onCancel: { renaming = nil })
+            }
+            if let deleting {
+                ConfirmDialog(
+                    title: "Delete Thread",
+                    description: "Delete \(deleting.title ?? "this thread") from supervisor. The backend session id will no longer appear in this workspace list.",
+                    confirmLabel: "Delete Thread",
+                    onConfirm: {
+                        Task {
+                            try? await api.deleteThread(deviceId: deviceId, threadId: deleting.id)
+                            threads.removeAll { $0.id == deleting.id }
+                            self.deleting = nil
+                        }
+                    },
+                    onCancel: { self.deleting = nil }
+                )
+            }
+        }
         .task {
             let all = (try? await api.fetchThreads(deviceId: deviceId)) ?? []
             threads = all.filter { $0.workspaceId == workspaceId }

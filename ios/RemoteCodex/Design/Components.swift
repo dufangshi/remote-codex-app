@@ -5,6 +5,8 @@ struct RcButton: View {
     let label: String
     var primary = true
     var enabled = true
+    var fillWidth = true
+    var systemImage: String? = nil
     var identifier: String? = nil
     let action: () -> Void
 
@@ -12,21 +14,87 @@ struct RcButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(minHeight: Rc.touch)
-                .padding(.horizontal, 14)
-                .frame(maxWidth: .infinity)
-                .foregroundStyle(primary ? colors.accentSolidFg : colors.fg)
-                .background(primary ? (enabled ? colors.accentSolid : colors.muted) : colors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: Rc.radius, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Rc.radius, style: .continuous)
-                        .stroke(primary ? Color.clear : colors.border, lineWidth: 1)
-                )
+            HStack(spacing: 8) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                }
+                Text(label)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .frame(minHeight: Rc.touch)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: fillWidth ? .infinity : nil)
+            .foregroundStyle(primary ? colors.accentSolidFg : colors.fg)
+            .background(primary ? (enabled ? colors.accentSolid : colors.muted) : colors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: Rc.radius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Rc.radius, style: .continuous)
+                    .stroke(primary ? Color.clear : colors.border, lineWidth: 1)
+            )
         }
         .disabled(!enabled)
         .accessibilityIdentifier(identifier ?? label)
+    }
+}
+
+struct ConfirmDialog: View {
+    let title: String
+    let description: String
+    var confirmLabel = "Confirm"
+    var busy = false
+    var onConfirm: () -> Void
+    var onCancel: () -> Void
+    @Environment(\.rcColors) private var colors
+
+    var body: some View {
+        ZStack {
+            colors.overlay.ignoresSafeArea().onTapGesture(perform: onCancel)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title).font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
+                Text(description).font(.system(size: 14)).foregroundStyle(colors.fgMuted)
+                HStack(spacing: 8) {
+                    RcButton(label: "Cancel", primary: false, action: onCancel)
+                    RcButton(label: busy ? "Working..." : confirmLabel, enabled: !busy, identifier: "confirmOk", action: onConfirm)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 420)
+            .background(colors.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
+            .padding(24)
+        }
+        .accessibilityIdentifier("confirmDialog")
+    }
+}
+
+struct PromptDialog: View {
+    let title: String
+    let label: String
+    @Binding var value: String
+    var busy = false
+    var onSubmit: () -> Void
+    var onCancel: () -> Void
+    @Environment(\.rcColors) private var colors
+
+    var body: some View {
+        ZStack {
+            colors.overlay.ignoresSafeArea().onTapGesture(perform: onCancel)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title).font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
+                RcField(label: label, text: $value, identifier: "dialogField")
+                HStack(spacing: 8) {
+                    RcButton(label: "Cancel", primary: false, action: onCancel)
+                    RcButton(label: busy ? "Saving..." : "Save", enabled: !busy && !value.trimmingCharacters(in: .whitespaces).isEmpty, identifier: "dialogSave", action: onSubmit)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 420)
+            .background(colors.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
+            .padding(24)
+        }
     }
 }
 

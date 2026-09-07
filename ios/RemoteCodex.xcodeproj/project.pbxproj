@@ -12,6 +12,7 @@
 		3A23EBA385C41E209FD38C82 /* RemoteCodexApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B582C49511E8012D3779A31 /* RemoteCodexApp.swift */; };
 		3AD446CEDDCAB344691F851C /* ThreadWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A6226F10BCBCF75780F727F /* ThreadWebView.swift */; };
 		4F859B3781AFA046F4BFC4AD /* RemoteCodexUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20B8D46B37DE808A09C6B86E /* RemoteCodexUITests.swift */; };
+		534F5BC87D71F06C8B7C6E91 /* DeviceAccessViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAF0D9FCC1B95CEA1BB8A696 /* DeviceAccessViews.swift */; };
 		6E5D47588FB12D78C3CE90BD /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B78B224F68B667D7F2B51D56 /* Models.swift */; };
 		77FD2B0E44B01BBE8FF17A74 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D38F8A2105252D4BD4D5680 /* Components.swift */; };
 		83EA4DEC46FF2DD4706071C2 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D8938FC70E7D30BF5DE7202 /* RootView.swift */; };
@@ -50,6 +51,7 @@
 		B78B224F68B667D7F2B51D56 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		BD620A3F2229D517B02A755E /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
 		E73A168D7BF987C354EE4D65 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		EAF0D9FCC1B95CEA1BB8A696 /* DeviceAccessViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAccessViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -79,6 +81,7 @@
 			isa = PBXGroup;
 			children = (
 				6A75764386B1AF70AF05EE49 /* Screens.swift */,
+				C30CC743AA5F50657B1514E7 /* Devices */,
 				B7C70CA9B06694E654B82023 /* ThreadWeb */,
 			);
 			path = Features;
@@ -137,6 +140,14 @@
 				3928E330EF06B715CDD913B2 /* RemoteCodexUITests */,
 				83562AAAEC3F3EF6AD7C188E /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		C30CC743AA5F50657B1514E7 /* Devices */ = {
+			isa = PBXGroup;
+			children = (
+				EAF0D9FCC1B95CEA1BB8A696 /* DeviceAccessViews.swift */,
+			);
+			path = Devices;
 			sourceTree = "<group>";
 		};
 		CE01D238D6EE70BE1CCE2A52 /* Design */ = {
@@ -244,6 +255,7 @@
 				C829676B20F6307B68F458D4 /* APIClient.swift in Sources */,
 				A39C7A1ADB44D858D4A41673 /* AppRoute.swift in Sources */,
 				77FD2B0E44B01BBE8FF17A74 /* Components.swift in Sources */,
+				534F5BC87D71F06C8B7C6E91 /* DeviceAccessViews.swift in Sources */,
 				9F2C5BADE73A3EBFBE906D62 /* EventWatcher.swift in Sources */,
 				6E5D47588FB12D78C3CE90BD /* Models.swift in Sources */,
 				3A23EBA385C41E209FD38C82 /* RemoteCodexApp.swift in Sources */,

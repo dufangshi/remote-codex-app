@@ -1,7 +1,5 @@
 package com.remotecodex.app.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,6 +54,7 @@ import com.remotecodex.app.data.RelayDevice
 import com.remotecodex.app.data.SecurityStatus
 import com.remotecodex.app.data.RelayPortal
 import com.remotecodex.app.data.RelaySession
+import com.remotecodex.app.data.RelayGrant
 import com.remotecodex.app.data.RelayShare
 import com.remotecodex.app.data.RuntimeConfig
 import com.remotecodex.app.data.SessionStore
@@ -110,6 +109,17 @@ fun DevicesScreen(
     var deviceName by remember { mutableStateOf("") }
     var createdToken by remember { mutableStateOf<Pair<String, String>?>(null) }
     var deleting by remember { mutableStateOf<RelayDevice?>(null) }
+    var rotating by remember { mutableStateOf<RelayDevice?>(null) }
+    var sharing by remember { mutableStateOf<RelayDevice?>(null) }
+    var editingGrant by remember { mutableStateOf<RelayGrant?>(null) }
+    var editingShare by remember { mutableStateOf<RelayShare?>(null) }
+    var revokingGrant by remember { mutableStateOf<RelayGrant?>(null) }
+    var revokingShare by remember { mutableStateOf<RelayShare?>(null) }
+    var expandedId by remember { mutableStateOf<String?>(null) }
+    var menuId by remember { mutableStateOf<String?>(null) }
+    var copiedDeviceId by remember { mutableStateOf<String?>(null) }
+    var copyError by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var dialogError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var sharedTab by remember { mutableStateOf(0) }
 
@@ -220,15 +230,44 @@ fun DevicesScreen(
                                 DeviceCard(
                                     device = device,
                                     relayHttps = store.relayUrl.startsWith("https://"),
+                                    copied = copiedDeviceId == device.id,
+                                    copyError = copyError?.takeIf { it.first == device.id }?.second,
+                                    menuOpen = menuId == device.id,
+                                    onToggleMenu = { menuId = if (menuId == device.id) null else device.id },
                                     onConnect = { onConnectDevice(device) },
                                     onCopyUnix = {
+                                        menuId = null
                                         scope.launch {
                                             runCatching { api.fetchSetupToken(device.id) }
-                                                .onSuccess { copyText(context, unixSetup(store.relayUrl, it.token)) }
-                                                .onFailure { error = it.message }
+                                                .onSuccess {
+                                                    copyText(context, supervisorSetup(store.relayUrl, it.token, windows = false))
+                                                    copiedDeviceId = device.id
+                                                    copyError = null
+                                                }
+                                                .onFailure {
+                                                    copyError = device.id to (it.message ?: "Unable to copy the setup command.")
+                                                    copiedDeviceId = null
+                                                }
                                         }
                                     },
-                                    onDelete = { deleting = device },
+                                    onCopyWindows = {
+                                        menuId = null
+                                        scope.launch {
+                                            runCatching { api.fetchSetupToken(device.id) }
+                                                .onSuccess {
+                                                    copyText(context, supervisorSetup(store.relayUrl, it.token, windows = true))
+                                                    copiedDeviceId = device.id
+                                                    copyError = null
+                                                }
+                                                .onFailure {
+                                                    copyError = device.id to (it.message ?: "Unable to copy the setup command.")
+                                                    copiedDeviceId = null
+                                                }
+                                        }
+                                    },
+                                    onShare = { menuId = null; dialogError = null; sharing = device },
+                                    onRotate = { menuId = null; rotating = device },
+                                    onDelete = { menuId = null; deleting = device },
                                 )
                             }
                         }
@@ -238,82 +277,60 @@ fun DevicesScreen(
                 Text("Shared access", color = colors.fg, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 Text("Access you received and access you granted.", color = colors.fgMuted, fontSize = 13.sp)
                 Spacer(Modifier.height(12.dp))
+                val incomingDevices = groupGrants(portal?.sharedDevicesWithMe.orEmpty())
+                val outgoingDevices = groupGrants(portal?.grantsByMe.orEmpty())
                 val tabs = listOf(
                     "Threads with me" to (portal?.sharedWithMe?.size ?: 0),
-                    "Devices with me" to (portal?.sharedDevicesWithMe?.size ?: 0),
-                    "Devices by me" to (portal?.grantsByMe?.size ?: 0),
+                    "Devices with me" to incomingDevices.size,
+                    "Devices by me" to outgoingDevices.size,
                     "Threads by me" to (portal?.sharedByMe?.size ?: 0),
                 )
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .border(1.dp, colors.border, RoundedCornerShape(8.dp))
-                        .background(colors.surface)
-                        .padding(3.dp),
-                ) {
-                    tabs.forEachIndexed { index, (label, count) ->
-                        val selected = sharedTab == index
-                        Row(
-                            Modifier
-                                .clip(RcRadius)
-                                .background(if (selected) colors.panel else colors.surface)
-                                .clickable { sharedTab = index }
-                                .padding(horizontal = 10.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(label, color = if (selected) colors.fg else colors.fgMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.width(6.dp))
-                            Text("$count", color = colors.fgMuted, fontSize = 11.sp)
-                        }
-                    }
-                }
+                SharedAccessTabs(tabs, sharedTab) { sharedTab = it }
                 Spacer(Modifier.height(12.dp))
                 when (sharedTab) {
-                    0 -> ShareList(portal?.sharedWithMe.orEmpty(), empty = "No sessions have been shared with this account yet.") { share ->
-                        onOpenSharedThread(share.deviceId, share.threadId, share.workspaceId)
-                    }
-                    1 -> {
-                        val grants = portal?.sharedDevicesWithMe.orEmpty()
-                        if (grants.isEmpty()) {
-                            EmptyCard("No devices have been shared with this account yet.")
-                        } else {
-                            grants.forEach { grant ->
-                                ShareRow(
-                                    title = grant.deviceName.ifBlank { "Device" },
-                                    subtitle = grant.ownerUsername,
-                                    onOpen = { onOpenSharedDevice(grant.deviceId) },
-                                )
-                            }
-                        }
-                    }
-                    2 -> {
-                        val grants = portal?.grantsByMe.orEmpty()
-                        if (grants.isEmpty()) {
-                            EmptyCard("No devices have been shared by this account yet.")
-                        } else {
-                            grants.forEach { grant ->
-                                ShareRow(
-                                    title = grant.deviceName.ifBlank { "Device" },
-                                    subtitle = listOfNotNull(
-                                        grant.targetUsername.takeIf { it.isNotBlank() },
-                                        grant.lastAccessedAt?.let { "Visited $it" } ?: "No visits yet",
-                                    ).joinToString(" · "),
-                                    onOpen = { onOpenSharedDevice(grant.deviceId) },
-                                )
-                            }
-                        }
-                    }
-                    else -> ShareList(portal?.sharedByMe.orEmpty(), empty = "No threads have been shared by this account yet.") { share ->
-                        onOpenSharedThread(share.deviceId, share.threadId, share.workspaceId)
-                    }
+                    0 -> SharedThreadList(
+                        shares = portal?.sharedWithMe.orEmpty(),
+                        incoming = true,
+                        empty = "No sessions have been shared with this account yet.",
+                        expandedId = expandedId,
+                        onOpen = { onOpenSharedThread(it.deviceId, it.threadId, it.workspaceId) },
+                        onToggle = { expandedId = if (expandedId == it.id) null else it.id },
+                    )
+                    1 -> SharedGrantList(
+                        groups = incomingDevices,
+                        incoming = true,
+                        empty = "No devices have been shared with this account yet.",
+                        expandedId = expandedId,
+                        onOpen = { onOpenSharedDevice(it.deviceId) },
+                        onToggle = { expandedId = if (expandedId == it.id) null else it.id },
+                    )
+                    2 -> SharedGrantList(
+                        groups = outgoingDevices,
+                        incoming = false,
+                        empty = "No devices have been shared by this account yet.",
+                        expandedId = expandedId,
+                        onOpen = { onOpenSharedDevice(it.deviceId) },
+                        onToggle = { expandedId = if (expandedId == it.id) null else it.id },
+                        onEdit = { editingGrant = it },
+                        onRevoke = { revokingGrant = it },
+                    )
+                    else -> SharedThreadList(
+                        shares = portal?.sharedByMe.orEmpty(),
+                        incoming = false,
+                        empty = "No threads have been shared by this account yet.",
+                        expandedId = expandedId,
+                        onOpen = { onOpenSharedThread(it.deviceId, it.threadId, it.workspaceId) },
+                        onToggle = { expandedId = if (expandedId == it.id) null else it.id },
+                        onEdit = { editingShare = it },
+                        onRevoke = { revokingShare = it },
+                    )
                 }
             }
         }
         deleting?.let { device ->
             ConfirmDialog(
-                title = "Delete device",
-                description = "Delete ${device.name}? The supervisor token for this device will stop working.",
+                title = "Delete relay device",
+                description = "Delete ${device.name}? Its device token will stop working immediately. This cannot be undone.",
                 confirmLabel = "Delete device",
                 busy = busy,
                 onCancel = { deleting = null },
@@ -328,152 +345,128 @@ fun DevicesScreen(
                 },
             )
         }
-    }
-}
-
-@Composable
-private fun DeviceCard(
-    device: RelayDevice,
-    relayHttps: Boolean,
-    onConnect: () -> Unit,
-    onCopyUnix: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    val colors = rcColors
-    var menu by remember { mutableStateOf(false) }
-    val canConnect = device.connected || device.hostedStatus == "stopped"
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(12.dp)
-            .testTag("device-${device.id}"),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(device.connected)
-            Spacer(Modifier.width(8.dp))
-            Text(device.name, color = colors.fg, fontWeight = FontWeight.Medium, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Spacer(Modifier.height(4.dp))
-        Mono(device.tokenPreview)
-        Spacer(Modifier.height(6.dp))
-        Text(
-            when {
-                device.hostedStatus == "stopped" -> "Stopped. Connect to wake this VM."
-                device.hostedStatus != null && device.hostedStatus != "online" ->
-                    "Hosted: ${device.hostedStatus}. The hosted supervisor is not ready yet."
-                device.connected && !device.connectedAt.isNullOrBlank() -> "Online since ${device.connectedAt}"
-                device.connected -> "Online. Connected time unavailable."
-                !device.lastHeartbeatAt.isNullOrBlank() -> "Last heartbeat ${device.lastHeartbeatAt}"
-                else -> "No heartbeat recorded."
-            },
-            color = colors.fgMuted,
-            fontSize = 12.sp,
-        )
-        Text(
-            if (relayHttps) "Device connection uses HTTPS" else "Connection is not end-to-end encrypted",
-            color = if (relayHttps) colors.successFg else colors.fgMuted,
-            fontSize = 11.sp,
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            PrimaryButton(
-                if (device.hostedStatus == "stopped") "Start & connect" else "Connect",
-                enabled = canConnect,
-                modifier = Modifier.weight(1f),
-                tag = "connectDeviceButton",
-                leading = { Icon(Icons.Filled.Power, null, tint = rcColors.accentSolidFg, modifier = Modifier.size(16.dp)) },
-                onClick = onConnect,
-            )
-            Box {
-                IconButton("More actions for ${device.name}", onClick = { menu = !menu }) {
-                    Icon(Icons.Filled.MoreHoriz, null, tint = colors.fgMuted)
-                }
-                if (menu) {
-                    Column(
-                        Modifier
-                            .width(220.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .border(1.dp, colors.border, RoundedCornerShape(8.dp))
-                            .background(colors.panel)
-                            .padding(6.dp),
-                    ) {
-                        MenuItem("Copy Unix setup", onClick = { menu = false; onCopyUnix() })
-                        MenuItem("Delete", onClick = { menu = false; onDelete() })
+        rotating?.let { device ->
+            ConfirmDialog(
+                title = "Replace device token?",
+                description = "The current connection will close. Update the device setup with the new token to reconnect. Existing workspaces and threads are kept.",
+                confirmLabel = "Replace token",
+                busy = busy,
+                onCancel = { rotating = null },
+                onConfirm = {
+                    busy = true
+                    scope.launch {
+                        runCatching { api.rotateDeviceToken(device.id) }
+                            .onSuccess {
+                                createdToken = it.device.name to it.token
+                                rotating = null
+                                load(false)
+                            }
+                            .onFailure { error = it.message }
+                        busy = false
                     }
-                }
-            }
+                },
+            )
         }
-    }
-    Box(Modifier.fillMaxWidth().height(1.dp).background(colors.border))
-}
-
-@Composable
-private fun ShareList(shares: List<RelayShare>, empty: String, onOpen: (RelayShare) -> Unit) {
-    if (shares.isEmpty()) {
-        EmptyCard(empty)
-    } else {
-        shares.forEach { share ->
-            ShareRow(
-                title = share.threadTitle ?: "Thread",
-                subtitle = "${share.deviceName} · ${share.ownerUsername}",
-                onOpen = { onOpen(share) },
+        sharing?.let { device ->
+            ShareDeviceDialog(
+                deviceName = device.name,
+                busy = busy,
+                error = dialogError,
+                onClose = { sharing = null; dialogError = null },
+                onShare = { target, label, threadAccess, workspaceAccess, canCreate ->
+                    busy = true
+                    dialogError = null
+                    scope.launch {
+                        runCatching {
+                            api.createGrant(device.id, target, label, threadAccess, workspaceAccess, canCreate)
+                        }.onSuccess {
+                            sharing = null
+                            load(false)
+                        }.onFailure { dialogError = it.message }
+                        busy = false
+                    }
+                },
+            )
+        }
+        editingGrant?.let { grant ->
+            PermissionDialog(
+                title = "Permissions",
+                initialThread = grant.threadAccess,
+                initialWorkspace = grant.workspaceAccess,
+                initialCanCreate = grant.canCreateThreads,
+                showCanCreate = true,
+                busy = busy,
+                error = dialogError,
+                onClose = { editingGrant = null; dialogError = null },
+                onSave = { threadAccess, workspaceAccess, canCreate ->
+                    busy = true
+                    scope.launch {
+                        runCatching { api.updateGrant(grant.id, threadAccess, workspaceAccess, canCreate, grant.label) }
+                            .onSuccess { editingGrant = null; load(false) }
+                            .onFailure { dialogError = it.message }
+                        busy = false
+                    }
+                },
+            )
+        }
+        editingShare?.let { share ->
+            PermissionDialog(
+                title = "Permissions",
+                initialThread = share.threadAccess,
+                initialWorkspace = share.workspaceAccess,
+                initialCanCreate = false,
+                showCanCreate = false,
+                busy = busy,
+                error = dialogError,
+                onClose = { editingShare = null; dialogError = null },
+                onSave = { threadAccess, workspaceAccess, _ ->
+                    busy = true
+                    scope.launch {
+                        runCatching { api.updateShare(share.id, threadAccess, workspaceAccess, share.label) }
+                            .onSuccess { editingShare = null; load(false) }
+                            .onFailure { dialogError = it.message }
+                        busy = false
+                    }
+                },
+            )
+        }
+        revokingGrant?.let { grant ->
+            ConfirmDialog(
+                title = "Revoke shared device access",
+                description = "Revoke access for ${grant.targetUsername.ifBlank { "this user" }} on ${grant.deviceName.ifBlank { "this device" }}?",
+                confirmLabel = "Revoke",
+                busy = busy,
+                onCancel = { revokingGrant = null },
+                onConfirm = {
+                    busy = true
+                    scope.launch {
+                        runCatching { api.revokeGrant(grant.id) }
+                            .onSuccess { revokingGrant = null; load(false) }
+                            .onFailure { error = it.message }
+                        busy = false
+                    }
+                },
+            )
+        }
+        revokingShare?.let { share ->
+            ConfirmDialog(
+                title = "Revoke shared thread access",
+                description = "Revoke access for ${share.targetUsername.ifBlank { "this user" }} on ${share.threadTitle ?: "this thread"}?",
+                confirmLabel = "Revoke",
+                busy = busy,
+                onCancel = { revokingShare = null },
+                onConfirm = {
+                    busy = true
+                    scope.launch {
+                        runCatching { api.revokeShare(share.id) }
+                            .onSuccess { revokingShare = null; load(false) }
+                            .onFailure { error = it.message }
+                        busy = false
+                    }
+                },
             )
         }
     }
-}
-
-@Composable
-private fun ShareRow(title: String, subtitle: String, onOpen: () -> Unit) {
-    val colors = rcColors
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, colors.border, RoundedCornerShape(8.dp))
-            .background(colors.panel)
-            .clickable(onClick = onOpen)
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = colors.fg, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-            Text(subtitle, color = colors.fgMuted, fontSize = 12.sp)
-        }
-        PrimaryButton("Open", onClick = onOpen)
-    }
-    Spacer(Modifier.height(8.dp))
-}
-
-@Composable
-private fun EmptyCard(text: String) {
-    val colors = rcColors
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, colors.border, RoundedCornerShape(8.dp))
-            .background(colors.panel)
-            .padding(24.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, color = colors.fgMuted, fontSize = 14.sp)
-    }
-}
-
-private fun unixSetup(relayUrl: String, token: String): String {
-    val ws = if (relayUrl.startsWith("https://")) "wss://${relayUrl.removePrefix("https://")}"
-    else "ws://${relayUrl.removePrefix("http://")}"
-    return """
-REMOTE_CODEX_RELAY_SERVER_URL=$ws \
-REMOTE_CODEX_RELAY_AGENT_TOKEN=$token \
-REMOTE_CODEX_RELAY_SUPERVISOR_PORT=45679 \
-remote-codex relay-supervisor
-""".trim()
-}
-
-private fun copyText(context: Context, text: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    clipboard.setPrimaryClip(ClipData.newPlainText("Remote Codex", text))
 }
 
 @Composable

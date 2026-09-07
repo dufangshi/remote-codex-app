@@ -130,6 +130,65 @@ class ApiClient(
         request<JsonObject>("/relay/shares/${enc(id)}", method = "DELETE")
     }
 
+    suspend fun createGrant(
+        deviceId: String,
+        targetIdentifier: String,
+        label: String,
+        threadAccess: String,
+        workspaceAccess: String,
+        canCreateThreads: Boolean,
+    ): RelayGrant = request(
+        "/relay/grants",
+        method = "POST",
+        body = json.encodeToString(
+            buildJsonObject {
+                put("targetIdentifier", targetIdentifier)
+                put("deviceId", deviceId)
+                put("scope", "device")
+                if (label.isNotBlank()) put("label", label)
+                put("threadAccess", threadAccess)
+                put("workspaceAccess", workspaceAccess)
+                put("canCreateThreads", canCreateThreads)
+            },
+        ),
+    )
+
+    suspend fun updateGrant(
+        id: String,
+        threadAccess: String,
+        workspaceAccess: String,
+        canCreateThreads: Boolean,
+        label: String?,
+    ): RelayGrant = request(
+        "/relay/grants/${enc(id)}",
+        method = "PATCH",
+        body = json.encodeToString(
+            buildJsonObject {
+                put("threadAccess", threadAccess)
+                put("workspaceAccess", workspaceAccess)
+                put("canCreateThreads", canCreateThreads)
+                if (label != null) put("label", label)
+            },
+        ),
+    )
+
+    suspend fun updateShare(
+        id: String,
+        threadAccess: String,
+        workspaceAccess: String,
+        label: String?,
+    ): RelayShare = request(
+        "/relay/shares/${enc(id)}",
+        method = "PATCH",
+        body = json.encodeToString(
+            buildJsonObject {
+                put("threadAccess", threadAccess)
+                put("workspaceAccess", workspaceAccess)
+                if (label != null) put("label", label)
+            },
+        ),
+    )
+
     fun clearCookies() {
         cookies.clear()
     }
