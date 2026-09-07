@@ -1,6 +1,7 @@
 import SwiftUI
 import UserNotifications
 import WebKit
+import BackgroundTasks
 
 @main
 struct RemoteCodexApp: App {
@@ -24,6 +25,9 @@ struct RemoteCodexApp: App {
             EventWatcher.shared.isForeground = phase == .active
             if phase == .active, model.store.isSignedIn {
                 EventWatcher.shared.start()
+            }
+            if phase == .background {
+                EventWatcher.shared.scheduleBackgroundRefresh()
             }
         }
     }
@@ -51,6 +55,11 @@ final class AppModel: ObservableObject {
         self.nav = NavController(store.hasRelayUrl ? .home : .connect)
         self.api = APIClient(store: store)
         UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
+        EventWatcher.shared.registerBackgroundTasks()
+        EventWatcher.shared.store = store
+        if store.isSignedIn {
+            EventWatcher.shared.start()
+        }
     }
 
     func apply(url: URL) {

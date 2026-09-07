@@ -42,6 +42,9 @@ targets:
         UILaunchScreen: {}
         UIBackgroundModes:
           - fetch
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.remotecodex.app.watch
     entitlements:
       path: RemoteCodex/RemoteCodex.entitlements
   RemoteCodexUITests:

@@ -79,7 +79,7 @@ class MainActivity : ComponentActivity() {
         }
         maybeRequestNotifications()
         handleDeepLink(intent)
-        if (store.isSignedIn && store.deviceId.isNotBlank()) {
+        if (store.isSignedIn) {
             AgentEventService.start(this)
         }
 

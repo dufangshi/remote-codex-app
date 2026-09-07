@@ -236,6 +236,7 @@ data class ThreadSummary(
     val lastError: String? = null,
     val createdAt: String = "",
     val updatedAt: String = "",
+    val lastTurnCompletedAt: String? = null,
 )
 
 @Serializable

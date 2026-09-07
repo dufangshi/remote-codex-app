@@ -19,18 +19,27 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.time.Instant
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.resume
 
 class AgentEventService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private var watchJob: Job? = null
-    private val socket = AtomicReference<WebSocket?>(null)
+    private val socketJobs = ConcurrentHashMap<String, Job>()
+    private val sockets = ConcurrentHashMap<String, WebSocket>()
+    private val knownStatus = mutableMapOf<String, String>()
+    private val recentlyNotified = mutableMapOf<String, Long>()
+    private val primedDevices = mutableSetOf<String>()
+    private val titles = mutableMapOf<String, String>()
+    private val deviceNames = mutableMapOf<String, String>()
+    private val lock = Any()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -55,7 +64,10 @@ class AgentEventService : Service() {
 
     override fun onDestroy() {
         watchJob?.cancel()
-        socket.getAndSet(null)?.cancel()
+        socketJobs.values.forEach { it.cancel() }
+        socketJobs.clear()
+        sockets.values.forEach { it.cancel() }
+        sockets.clear()
         super.onDestroy()
     }
 
@@ -65,64 +77,175 @@ class AgentEventService : Service() {
             val store = SessionStore(this@AgentEventService)
             val api = ApiClient(store)
             while (isActive) {
-                val deviceId = store.deviceId
-                val token = store.token
-                if (deviceId.isBlank() || token.isBlank() || store.relayUrl.isBlank()) {
+                if (store.token.isBlank() || store.relayUrl.isBlank()) {
                     delay(2_000)
                     continue
                 }
-                pollThreads(api, store, deviceId)
-                connect(api, store, deviceId)
-                delay(2_500)
+                val deviceIds = loadDeviceIds(api)
+                syncSockets(api, deviceIds)
+                for (deviceId in deviceIds) {
+                    pollDevice(api, deviceId)
+                }
+                delay(4_000)
             }
         }
     }
 
-    private val knownStatus = mutableMapOf<String, String>()
-    private val notified = mutableSetOf<String>()
-    private var primed = false
-    private var primedDevice: String? = null
-
-    private suspend fun pollThreads(api: ApiClient, store: SessionStore, deviceId: String) {
-        if (primedDevice != deviceId) {
-            primed = false
-            knownStatus.clear()
-            notified.clear()
-            primedDevice = deviceId
-        }
-        val threads = runCatching { api.fetchThreads(deviceId) }.getOrDefault(emptyList())
-        if (!primed) {
-            threads.forEach {
-                knownStatus[it.id] = it.status
-                notified.add(it.id)
+    private suspend fun loadDeviceIds(api: ApiClient): List<String> {
+        val portal = runCatching { api.fetchPortal() }.getOrNull() ?: return emptyList()
+        val ids = LinkedHashSet<String>()
+        synchronized(lock) {
+            for (device in portal.devices) {
+                ids.add(device.id)
+                deviceNames[device.id] = device.name
             }
-            primed = true
+            for (grant in portal.sharedDevicesWithMe) {
+                if (ids.add(grant.deviceId)) {
+                    deviceNames[grant.deviceId] = grant.deviceName.ifBlank { grant.deviceId }
+                }
+            }
+        }
+        return ids.toList()
+    }
+
+    private fun syncSockets(api: ApiClient, deviceIds: List<String>) {
+        val wanted = deviceIds.toSet()
+        val extra = socketJobs.keys - wanted
+        for (id in extra) {
+            socketJobs.remove(id)?.cancel()
+            sockets.remove(id)?.cancel()
+        }
+        for (deviceId in deviceIds) {
+            val existing = socketJobs[deviceId]
+            if (existing?.isActive == true) continue
+            socketJobs[deviceId] = scope.launch {
+                while (isActive) {
+                    connectOnce(api, deviceId)
+                    delay(2_500)
+                }
+            }
+        }
+    }
+
+    private suspend fun pollDevice(api: ApiClient, deviceId: String) {
+        val threads = runCatching { api.fetchThreads(deviceId) }.getOrNull() ?: return
+        val firstSeen = synchronized(lock) { primedDevices.add(deviceId) }
+        if (firstSeen) {
+            synchronized(lock) {
+                for (thread in threads) {
+                    val key = key(deviceId, thread.id)
+                    knownStatus[key] = thread.status
+                    if (thread.title.isNotBlank()) titles[key] = thread.title
+                }
+            }
             return
         }
         for (thread in threads) {
-            val previous = knownStatus[thread.id]
-            knownStatus[thread.id] = thread.status
-            val finished = thread.status in setOf("idle", "failed", "interrupted", "system_error")
-            val justFinished = previous == "running" ||
-                (previous == null && isRecent(thread.updatedAt))
-            if (finished && !notified.contains(thread.id) && justFinished) {
-                notified.add(thread.id)
-                val current = ActiveThreadTracker.current
-                if (current?.deviceId == deviceId && current.threadId == thread.id && RemoteCodexForeground.isForeground) {
-                    continue
-                }
-                val failed = thread.status == "failed"
-                Notifications.agentFinished(
-                    this,
-                    deviceId,
-                    thread.id,
-                    thread.title.ifBlank { "Thread" },
-                    if (failed) "Agent run failed." else "Agent run finished.",
-                    thread.id.hashCode(),
-                )
-            } else if (!notified.contains(thread.id)) {
-                notified.add(thread.id)
+            consider(
+                deviceId = deviceId,
+                threadId = thread.id,
+                status = thread.status,
+                title = thread.title,
+                completedAt = thread.lastTurnCompletedAt ?: thread.updatedAt,
+                eventType = null,
+            )
+        }
+    }
+
+    private suspend fun connectOnce(api: ApiClient, deviceId: String) {
+        suspendCancellableCoroutine { cont ->
+            val ws = api.openDeviceSocket(
+                deviceId,
+                object : WebSocketListener() {
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        handleEvent(deviceId, text)
+                    }
+
+                    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                        if (cont.isActive) cont.resume(Unit)
+                    }
+
+                    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                        if (cont.isActive) cont.resume(Unit)
+                    }
+                },
+            )
+            sockets[deviceId] = ws
+            cont.invokeOnCancellation { ws.cancel() }
+        }
+    }
+
+    private fun handleEvent(deviceId: String, text: String) {
+        val event = runCatching { json.decodeFromString<ThreadEvent>(text) }.getOrNull() ?: return
+        consider(
+            deviceId = deviceId,
+            threadId = event.threadId,
+            status = event.status(),
+            title = event.title(),
+            completedAt = null,
+            eventType = event.type,
+        )
+    }
+
+    private fun consider(
+        deviceId: String,
+        threadId: String,
+        status: String?,
+        title: String?,
+        completedAt: String?,
+        eventType: String?,
+    ) {
+        val key = key(deviceId, threadId)
+        val turnDone = eventType == "thread.turn.completed" || eventType == "thread.turn.failed"
+        val failed = eventType == "thread.turn.failed" || status == "failed"
+        val finishedStatuses = setOf("idle", "failed", "interrupted", "system_error")
+        val running = status == "running"
+        val previous: String?
+        val resolvedTitle: String
+        val deviceName: String?
+        synchronized(lock) {
+            if (!title.isNullOrBlank()) titles[key] = title
+            previous = knownStatus[key]
+            if (running) {
+                knownStatus[key] = "running"
+                return
             }
+            val finished = turnDone || (status != null && status in finishedStatuses)
+            if (!finished) {
+                if (status != null) knownStatus[key] = status
+                return
+            }
+            knownStatus[key] = if (failed) "failed" else status?.takeIf { it in finishedStatuses } ?: "idle"
+            resolvedTitle = titles[key] ?: "Thread"
+            deviceName = deviceNames[deviceId]
+        }
+        val wasRunning = previous == "running"
+        val appearedFinished = previous == null && eventType == null && isRecent(completedAt)
+        if (!turnDone && !wasRunning && !appearedFinished) return
+        if (isDuplicate(key)) return
+        val current = ActiveThreadTracker.current
+        if (current?.deviceId == deviceId && current.threadId == threadId && RemoteCodexForeground.isForeground) {
+            return
+        }
+        val prefix = deviceName?.takeIf { it.isNotBlank() }?.let { "$it · " } ?: ""
+        val body = if (failed) "${prefix}Agent run failed." else "${prefix}Agent run finished."
+        Notifications.agentFinished(
+            this,
+            deviceId,
+            threadId,
+            resolvedTitle,
+            body,
+            (deviceId + threadId + System.currentTimeMillis()).hashCode(),
+        )
+    }
+
+    private fun isDuplicate(key: String): Boolean {
+        val now = System.currentTimeMillis()
+        synchronized(lock) {
+            val last = recentlyNotified[key]
+            if (last != null && now - last < 10_000) return true
+            recentlyNotified[key] = now
+            return false
         }
     }
 
@@ -130,63 +253,6 @@ class AgentEventService : Service() {
         if (value.isNullOrBlank()) return false
         val instant = runCatching { Instant.parse(value) }.getOrNull() ?: return false
         return Instant.now().epochSecond - instant.epochSecond < 30
-    }
-
-    private fun connect(api: ApiClient, store: SessionStore, deviceId: String) {
-        val latch = java.util.concurrent.CountDownLatch(1)
-        val titles = mutableMapOf<String, String>()
-        val ws = api.openDeviceSocket(
-            deviceId,
-            object : WebSocketListener() {
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    val event = runCatching { json.decodeFromString<ThreadEvent>(text) }.getOrNull() ?: return
-                    if (event.type == "thread.updated") {
-                        event.title()?.let { titles[event.threadId] = it }
-                    }
-                    val status = event.status()
-                    val previous = knownStatus[event.threadId]
-                    if (status != null) {
-                        knownStatus[event.threadId] = status
-                    }
-                    val turnDone = event.type == "thread.turn.completed" || event.type == "thread.turn.failed"
-                    val finishedStatus = status in setOf("idle", "failed", "interrupted", "system_error")
-                    val completed = turnDone ||
-                        (event.type == "thread.updated" && finishedStatus && previous == "running")
-                    if (!completed) return
-                    if (!notified.add(event.threadId)) return
-                    val current = ActiveThreadTracker.current
-                    val appForeground = RemoteCodexForeground.isForeground
-                    if (current?.deviceId == deviceId && current.threadId == event.threadId && appForeground) {
-                        return
-                    }
-                    val failed = event.type == "thread.turn.failed" || event.status() == "failed"
-                    val title = titles[event.threadId] ?: "Thread"
-                    val body = if (failed) {
-                        event.error()?.takeIf { it.isNotBlank() } ?: "Agent run failed."
-                    } else {
-                        "Agent run finished."
-                    }
-                    Notifications.agentFinished(
-                        this@AgentEventService,
-                        deviceId,
-                        event.threadId,
-                        title,
-                        body,
-                        event.threadId.hashCode(),
-                    )
-                }
-
-                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    latch.countDown()
-                }
-
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    latch.countDown()
-                }
-            },
-        )
-        socket.getAndSet(ws)?.cancel()
-        latch.await()
     }
 
     companion object {
@@ -213,6 +279,8 @@ class AgentEventService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, AgentEventService::class.java))
         }
+
+        fun key(deviceId: String, threadId: String) = "$deviceId/$threadId"
     }
 }
 
