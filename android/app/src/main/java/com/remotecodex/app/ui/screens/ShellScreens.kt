@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -87,6 +88,10 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+private object PortalCache {
+    @Volatile var portal: RelayPortal? = null
+}
+
 @Composable
 fun DevicesScreen(
     store: SessionStore,
@@ -102,8 +107,8 @@ fun DevicesScreen(
     val colors = rcColors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var portal by remember { mutableStateOf<RelayPortal?>(null) }
-    var loading by remember { mutableStateOf(true) }
+    var portal by remember { mutableStateOf(PortalCache.portal) }
+    var loading by remember { mutableStateOf(PortalCache.portal == null) }
     var error by remember { mutableStateOf<String?>(null) }
     var addOpen by remember { mutableStateOf(false) }
     var deviceName by remember { mutableStateOf("") }
@@ -127,16 +132,22 @@ fun DevicesScreen(
         if (show) loading = true
         scope.launch {
             runCatching { api.fetchPortal() }
-                .onSuccess { portal = it; error = null }
+                .onSuccess { next ->
+                    if (next != portal) {
+                        portal = next
+                        PortalCache.portal = next
+                    }
+                    error = null
+                }
                 .onFailure { if (show || portal == null) error = it.message ?: "Unable to load devices." }
             loading = false
         }
     }
 
     LaunchedEffect(store.token) {
-        load()
+        load(show = portal == null)
         while (true) {
-            delay(3_000)
+            delay(8_000)
             load(show = false)
         }
     }
@@ -227,6 +238,7 @@ fun DevicesScreen(
                             )
                         } else {
                             devices.forEach { device ->
+                                key(device.id) {
                                 DeviceCard(
                                     device = device,
                                     relayHttps = store.relayUrl.startsWith("https://"),
@@ -269,6 +281,7 @@ fun DevicesScreen(
                                     onRotate = { menuId = null; rotating = device },
                                     onDelete = { menuId = null; deleting = device },
                                 )
+                                }
                             }
                         }
                     }

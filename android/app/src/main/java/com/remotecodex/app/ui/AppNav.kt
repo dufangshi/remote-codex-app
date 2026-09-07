@@ -7,6 +7,7 @@ sealed class AppRoute {
     data object Portal : AppRoute()
     data object Devices : AppRoute()
     data object Account : AppRoute()
+    data object Settings : AppRoute()
     data class Workspaces(val deviceId: String) : AppRoute()
     data class WorkspaceNew(val deviceId: String) : AppRoute()
     data class Threads(val deviceId: String, val workspaceId: String) : AppRoute()
@@ -73,7 +74,7 @@ class NavController(initial: AppRoute) {
             is AppRoute.Threads -> AppRoute.Workspaces(route.deviceId)
             is AppRoute.WorkspaceNew -> AppRoute.Workspaces(route.deviceId)
             is AppRoute.Workspaces -> AppRoute.Devices
-            AppRoute.Account, AppRoute.Devices, AppRoute.Guide, AppRoute.Portal -> AppRoute.Home
+            AppRoute.Account, AppRoute.Devices, AppRoute.Guide, AppRoute.Portal, AppRoute.Settings -> AppRoute.Home
             AppRoute.Home -> if (canGoBack() && stack.first() is AppRoute.Connect) AppRoute.Connect else null
             AppRoute.Connect -> null
         }

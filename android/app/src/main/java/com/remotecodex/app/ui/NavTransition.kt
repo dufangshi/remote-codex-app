@@ -32,6 +32,7 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.math.max
 
@@ -48,52 +49,55 @@ fun InteractiveStackHost(
     navigatingForward: Boolean,
     popRequest: Int,
     onPopCommitted: () -> Unit,
+    onRequestPop: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable (AppRoute) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val offset = remember { Animatable(0f) }
     var widthPx by remember { mutableFloatStateOf(1f) }
-    var settleZero by remember { mutableStateOf(false) }
-    var ready by remember { mutableStateOf(false) }
-    var popping by remember { mutableStateOf(false) }
-    var started by remember(route) { mutableStateOf(!ready) }
+    var booted by remember { mutableStateOf(false) }
+    var animatingPop by remember { mutableStateOf(false) }
     val density = LocalDensity.current
-
-    LaunchedEffect(Unit) { ready = true }
+    val width = max(widthPx, 1f)
 
     LaunchedEffect(route) {
-        if (settleZero) {
+        if (!booted) {
+            booted = true
             offset.snapTo(0f)
-            settleZero = false
-            popping = false
-            started = true
+            animatingPop = false
             return@LaunchedEffect
         }
-        if (navigatingForward && !started) {
-            offset.snapTo(max(widthPx, 1f))
-            started = true
+        if (animatingPop) {
+            offset.snapTo(0f)
+            animatingPop = false
+            return@LaunchedEffect
+        }
+        if (navigatingForward) {
+            offset.snapTo(width)
             offset.animateTo(0f, slideSpring)
         } else {
-            started = true
+            offset.snapTo(0f)
         }
     }
 
     LaunchedEffect(popRequest) {
-        if (popRequest == 0 || popping) return@LaunchedEffect
-        popping = true
-        val width = max(widthPx, 1f)
-        offset.animateTo(width, slideSpring)
-        settleZero = true
+        if (popRequest == 0) return@LaunchedEffect
+        animatingPop = true
+        try {
+            offset.animateTo(max(widthPx, 1f), slideSpring)
+        } catch (cancelled: CancellationException) {
+            onPopCommitted()
+            offset.snapTo(0f)
+            animatingPop = false
+            throw cancelled
+        }
         onPopCommitted()
+        offset.snapTo(0f)
+        animatingPop = false
     }
 
-    val x = when {
-        settleZero -> 0f
-        ready && navigatingForward && !started -> max(widthPx, 1f)
-        else -> offset.value
-    }
-    val width = max(widthPx, 1f)
+    val x = offset.value
     val progress = (x / width).coerceIn(0f, 1f)
     Box(
         modifier
@@ -131,7 +135,7 @@ fun InteractiveStackHost(
         ) {
             key(route) { content(route) }
         }
-        if (canSwipeBack && !popping) {
+        if (canSwipeBack && !animatingPop) {
             Box(
                 Modifier
                     .align(Alignment.CenterStart)
@@ -156,16 +160,10 @@ fun InteractiveStackHost(
                             val velocity = tracker.calculateVelocity().x
                             val translation = offset.value
                             val shouldPop = translation > width * 0.28f || velocity > with(density) { 420.dp.toPx() }
-                            scope.launch {
-                                if (shouldPop) {
-                                    if (popping) return@launch
-                                    popping = true
-                                    offset.animateTo(width, slideSpring)
-                                    settleZero = true
-                                    onPopCommitted()
-                                } else {
-                                    offset.animateTo(0f, slideSpring)
-                                }
+                            if (shouldPop) {
+                                onRequestPop()
+                            } else {
+                                scope.launch { offset.animateTo(0f, slideSpring) }
                             }
                         }
                     },

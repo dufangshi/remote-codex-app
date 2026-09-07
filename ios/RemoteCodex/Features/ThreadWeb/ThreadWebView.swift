@@ -41,12 +41,49 @@ struct ThreadScreen: View {
     }
 }
 
+struct SettingsScreen: View {
+    let store: SessionStore
+    let deviceId: String
+    let themeMode: ThemeMode
+    var sessionName: String?
+    var onBack: () -> Void
+    var onOpenNav: () -> Void
+    var onOpenAccount: () -> Void
+    var onLeave: (AppRoute) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ProductHeader(
+                title: "Settings",
+                backLabel: "Back",
+                onBack: onBack,
+                onOpenNav: onOpenNav,
+                onOpenAccount: onOpenAccount,
+                accountLabel: sessionName
+            )
+            ThreadWebView(
+                store: store,
+                deviceId: deviceId,
+                threadId: "",
+                themeMode: themeMode,
+                pagePath: "/relay-settings?nativeApp=1&relay=1",
+                onLeave: onLeave,
+                onNativeClose: onBack
+            )
+            .accessibilityIdentifier("settingsDialog")
+        }
+        .accessibilityIdentifier("settingsDialog")
+    }
+}
+
 struct ThreadWebView: UIViewControllerRepresentable {
     let store: SessionStore
     let deviceId: String
     let threadId: String
     let themeMode: ThemeMode
+    var pagePath: String? = nil
     let onLeave: (AppRoute) -> Void
+    var onNativeClose: (() -> Void)? = nil
 
     func makeUIViewController(context: Context) -> ThreadWebController {
         let controller = ThreadWebController()
@@ -60,7 +97,12 @@ struct ThreadWebView: UIViewControllerRepresentable {
                 onLeave(route)
             }
         }
-        controller.load(store: store, deviceId: deviceId, threadId: threadId, themeMode: themeMode)
+        controller.onNativeClose = {
+            DispatchQueue.main.async {
+                onNativeClose?()
+            }
+        }
+        controller.load(store: store, deviceId: deviceId, threadId: threadId, themeMode: themeMode, pagePath: pagePath)
     }
 }
 
@@ -70,6 +112,7 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
     var deviceId = ""
     var threadId = ""
     var onLeave: ((AppRoute) -> Void)?
+    var onNativeClose: (() -> Void)?
     private var loadedKey = ""
     private var interceptLeaves = false
     private var lastInjection = ""
@@ -95,10 +138,10 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         ])
     }
 
-    func load(store: SessionStore, deviceId: String, threadId: String, themeMode: ThemeMode) {
+    func load(store: SessionStore, deviceId: String, threadId: String, themeMode: ThemeMode, pagePath: String? = nil) {
         self.deviceId = deviceId
         self.threadId = threadId
-        let key = "\(deviceId)|\(threadId)|\(store.relayUrl)"
+        let key = "\(deviceId)|\(threadId)|\(store.relayUrl)|\(pagePath ?? "")"
         guard key != loadedKey else { return }
         loadedKey = key
         interceptLeaves = false
@@ -145,7 +188,11 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         webView = web
 
         let origin = store.relayUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let target = "\(origin)/devices/\(enc(deviceId))/threads/\(enc(threadId))?nativeApp=1&relay=1"
+        let target = if let pagePath, !pagePath.isEmpty {
+            "\(origin)\(pagePath.hasPrefix("/") ? pagePath : "/\(pagePath)")"
+        } else {
+            "\(origin)/devices/\(enc(deviceId))/threads/\(enc(threadId))?nativeApp=1&relay=1"
+        }
         guard let url = URL(string: target) else { return }
         Self.installRelaySessionCookie(store: store, dataStore: config.websiteDataStore) { [weak self, weak web] in
             guard let self, self.loadedKey == key else { return }
@@ -154,7 +201,8 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if webView.url?.path.contains("/threads/") == true {
+        let path = webView.url?.path ?? ""
+        if path.contains("/threads/") || path == "/relay-settings" {
             interceptLeaves = true
         }
         if !lastInjection.isEmpty {
@@ -181,6 +229,16 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
             return
         }
         if let frame = navigationAction.targetFrame, !frame.isMainFrame {
+            decisionHandler(.allow)
+            return
+        }
+        if url.path == "/__native/close" {
+            decisionHandler(.cancel)
+            let close = onNativeClose
+            DispatchQueue.main.async { close?() }
+            return
+        }
+        if url.path == "/relay-settings" {
             decisionHandler(.allow)
             return
         }
@@ -392,6 +450,7 @@ func nativeRoute(for url: URL, deviceId: String) -> AppRoute? {
     }
     if path == "/relay-devices" { return .devices }
     if path == "/relay-account" { return .account }
+    if path == "/relay-settings" { return .settings }
     if path == "/" || path == "/relay-portal" { return .home }
     return nil
 }

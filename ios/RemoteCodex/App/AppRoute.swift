@@ -7,6 +7,7 @@ enum AppRoute: Equatable, Hashable {
     case portal
     case devices
     case account
+    case settings
     case workspaces(deviceId: String)
     case workspaceNew(deviceId: String)
     case threads(deviceId: String, workspaceId: String)
@@ -94,7 +95,7 @@ final class NavController: ObservableObject {
             return .workspaces(deviceId: deviceId)
         case .workspaces:
             return .devices
-        case .account, .devices, .guide, .portal:
+        case .account, .devices, .guide, .portal, .settings:
             return .home
         case .home:
             return .connect

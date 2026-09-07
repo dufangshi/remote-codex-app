@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,8 +48,9 @@ import com.remotecodex.app.ui.screens.GuideScreen
 import com.remotecodex.app.ui.screens.HomeScreen
 import com.remotecodex.app.ui.screens.ImportScreen
 import com.remotecodex.app.ui.screens.NavMenu
+import com.remotecodex.app.theme.ThemeMode
 import com.remotecodex.app.ui.screens.PortalScreen
-import com.remotecodex.app.ui.screens.SettingsSheet
+import com.remotecodex.app.ui.screens.SettingsWebScreen
 import com.remotecodex.app.ui.screens.ThreadNewScreen
 import com.remotecodex.app.ui.screens.ThreadWebScreen
 import com.remotecodex.app.ui.screens.ThreadsScreen
@@ -68,6 +70,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        window.decorView.post { window.decorView.requestApplyInsets() }
         store = SessionStore(this)
         api = ApiClient(store)
         applyE2eOverrides(intent)
@@ -87,7 +90,6 @@ class MainActivity : ComponentActivity() {
             var session by remember { mutableStateOf<RelaySession?>(null) }
             var navOpen by remember { mutableStateOf(false) }
             var accountOpen by remember { mutableStateOf(false) }
-            var settingsOpen by remember { mutableStateOf(false) }
             var navigatingForward by remember { mutableStateOf(true) }
             var popRequest by remember { mutableIntStateOf(0) }
             val scope = rememberCoroutineScope()
@@ -103,6 +105,26 @@ class MainActivity : ComponentActivity() {
                 route = nav.current
                 navOpen = false
                 accountOpen = false
+            }
+
+            fun applyWebPrefs(theme: String?, autoCollapse: Boolean?) {
+                when (theme) {
+                    "light" -> {
+                        themeMode = ThemeMode.Light
+                        store.themeMode = ThemeMode.Light
+                    }
+                    "dark" -> {
+                        themeMode = ThemeMode.Dark
+                        store.themeMode = ThemeMode.Dark
+                    }
+                    "system" -> {
+                        themeMode = ThemeMode.System
+                        store.themeMode = ThemeMode.System
+                    }
+                }
+                if (autoCollapse != null) {
+                    store.autoCollapseCompletedTurns = autoCollapse
+                }
             }
 
             fun back() {
@@ -140,6 +162,12 @@ class MainActivity : ComponentActivity() {
                 onDispose { lifecycle.removeObserver(observer) }
             }
 
+            LaunchedEffect(route) {
+                if (nav.current != route) {
+                    nav.push(route)
+                }
+            }
+
             RemoteCodexTheme(themeMode) {
                 val colors = rcColors
                 BackHandler(enabled = route !is AppRoute.Connect) { back() }
@@ -157,6 +185,7 @@ class MainActivity : ComponentActivity() {
                         navigatingForward = navigatingForward,
                         popRequest = popRequest,
                         onPopCommitted = { commitPop() },
+                        onRequestPop = { back() },
                     ) { current ->
                     when (current) {
                         AppRoute.Connect -> ConnectScreen(store) {
@@ -275,6 +304,10 @@ class MainActivity : ComponentActivity() {
                             deviceId = current.deviceId,
                             threadId = current.threadId,
                             themeMode = themeMode,
+                            sessionName = session?.user?.username,
+                            onBack = { back() },
+                            onOpenNav = { navOpen = true },
+                            onOpenAccount = { accountOpen = true },
                             onLeaveThread = { next ->
                                 when (next) {
                                     is AppRoute.ThreadDetail -> go(next, replace = true)
@@ -285,6 +318,22 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                         )
+                        AppRoute.Settings -> SettingsWebScreen(
+                            store = store,
+                            deviceId = store.deviceId,
+                            themeMode = themeMode,
+                            sessionName = session?.user?.username,
+                            onBack = { back() },
+                            onOpenNav = { navOpen = true },
+                            onOpenAccount = { accountOpen = true },
+                            onLeave = { next ->
+                                if (next !is AppRoute.Settings) {
+                                    nav.pop()
+                                    go(next)
+                                }
+                            },
+                            onPrefs = { theme, collapse -> applyWebPrefs(theme, collapse) },
+                        )
                         AppRoute.Account -> AccountScreen(api = api, onBack = { back() })
                     }
                     }
@@ -293,10 +342,7 @@ class MainActivity : ComponentActivity() {
                         NavMenu(
                             devicesSelected = route is AppRoute.Devices,
                             onDevices = { go(AppRoute.Devices) },
-                            onSettings = {
-                                navOpen = false
-                                settingsOpen = true
-                            },
+                            onSettings = { go(AppRoute.Settings) },
                             onDismiss = { navOpen = false },
                         )
                     }
@@ -314,18 +360,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onDismiss = { accountOpen = false },
-                        )
-                    }
-                    if (settingsOpen) {
-                        SettingsSheet(
-                            themeMode = themeMode,
-                            autoCollapseCompletedTurns = store.autoCollapseCompletedTurns,
-                            onThemeMode = {
-                                themeMode = it
-                                store.themeMode = it
-                            },
-                            onAutoCollapse = { store.autoCollapseCompletedTurns = it },
-                            onDismiss = { settingsOpen = false },
                         )
                     }
                 }

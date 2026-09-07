@@ -9,7 +9,6 @@ struct RootView: View {
     @State private var session: RelaySession?
     @State private var navOpen = false
     @State private var accountOpen = false
-    @State private var settingsOpen = false
     @State private var agentBanner: (deviceId: String, threadId: String, title: String, body: String)?
     @State private var dragOffset: CGFloat = 0
     @State private var popping = false
@@ -76,7 +75,6 @@ struct RootView: View {
             }
             if navOpen { navMenu }
             if accountOpen { accountMenu }
-            if settingsOpen { settingsSheet }
         }
         .environment(\.rcColors, colors)
         .preferredColorScheme(store.themeMode == .system ? nil : (store.themeMode == .dark ? .dark : .light))
@@ -146,7 +144,11 @@ struct RootView: View {
     }
 
     private func animatedBack() {
-        guard canLeave, !popping else { return }
+        guard canLeave else { return }
+        if popping {
+            completePop()
+            return
+        }
         let width = UIScreen.main.bounds.width
         popping = true
         withAnimation(.interpolatingSpring(stiffness: 260, damping: 32, initialVelocity: 0)) {
@@ -254,6 +256,21 @@ struct RootView: View {
                     }
                 }
             )
+        case .settings:
+            SettingsScreen(
+                store: store,
+                deviceId: store.deviceId,
+                themeMode: store.themeMode,
+                sessionName: session?.user?.username,
+                onBack: { animatedBack() },
+                onOpenNav: { navOpen = true },
+                onOpenAccount: { accountOpen = true },
+                onLeave: { next in
+                    if case .settings = next { return }
+                    nav.pop()
+                    animatedPush(next)
+                }
+            )
         case .account:
             AccountScreen(api: api, onBack: { animatedBack() })
         }
@@ -278,9 +295,12 @@ struct RootView: View {
                     animatedPush(.devices)
                     navOpen = false
                 }
-                menuRow("Settings", selected: false) {
+                menuRow("Settings", selected: {
+                    if case .settings = nav.current { return true }
+                    return false
+                }()) {
                     navOpen = false
-                    settingsOpen = true
+                    animatedPush(.settings)
                 }
             }
             .padding(8)
@@ -321,60 +341,6 @@ struct RootView: View {
             .padding(.top, 64)
             .padding(.trailing, 12)
             .accessibilityIdentifier("accountMenu")
-        }
-    }
-
-    private var settingsSheet: some View {
-        let colors = colors
-        return ZStack {
-            colors.overlay.ignoresSafeArea().onTapGesture { settingsOpen = false }
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Settings").font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
-                    Spacer()
-                    Button("Close settings") { settingsOpen = false }.foregroundStyle(colors.fgMuted)
-                }
-                Text("Completed turns").font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
-                Button {
-                    store.autoCollapseCompletedTurns.toggle()
-                } label: {
-                    VStack(alignment: .leading) {
-                        Text("Auto-collapse completed turns").foregroundStyle(colors.fg)
-                        Text(store.autoCollapseCompletedTurns
-                             ? "Completed turns collapse after they finish."
-                             : "Completed turns stay expanded.")
-                            .font(.system(size: 12)).foregroundStyle(colors.fgMuted)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(store.autoCollapseCompletedTurns ? colors.accentSoft : colors.surface)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(store.autoCollapseCompletedTurns ? colors.accentBorder : colors.border, lineWidth: 1))
-                }
-                .accessibilityIdentifier("autoCollapseCompletedTurns")
-                Text("Appearance").font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
-                ForEach(ThemeMode.allCases) { mode in
-                    Button {
-                        store.themeMode = mode
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text(mode.title).foregroundStyle(colors.fg)
-                            Text(mode.subtitle).font(.system(size: 12)).foregroundStyle(colors.fgMuted)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(store.themeMode == mode ? colors.accentSoft : colors.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(store.themeMode == mode ? colors.accentBorder : colors.border, lineWidth: 1))
-                    }
-                    .accessibilityIdentifier("theme-\(mode.rawValue)")
-                }
-            }
-            .padding(20)
-            .background(colors.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(24)
-            .accessibilityIdentifier("settingsDialog")
         }
     }
 

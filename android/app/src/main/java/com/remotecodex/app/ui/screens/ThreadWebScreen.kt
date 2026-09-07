@@ -9,10 +9,14 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -37,6 +41,7 @@ import com.remotecodex.app.notify.OpenThreadRef
 import com.remotecodex.app.theme.ThemeMode
 import com.remotecodex.app.theme.rcColors
 import com.remotecodex.app.ui.AppRoute
+import com.remotecodex.app.ui.components.ProductHeader
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -46,66 +51,202 @@ fun ThreadWebScreen(
     deviceId: String,
     threadId: String,
     themeMode: ThemeMode,
+    sessionName: String? = null,
+    onBack: () -> Unit,
+    onOpenNav: () -> Unit,
+    onOpenAccount: () -> Unit,
     onLeaveThread: (AppRoute) -> Unit,
 ) {
-    val colors = rcColors
-    var error by remember { mutableStateOf<String?>(null) }
-    DisposableEffect(deviceId, threadId) {
-        ActiveThreadTracker.current = OpenThreadRef(deviceId, threadId)
-        onDispose {
+    RelayWebScreen(
+        store = store,
+        deviceId = deviceId,
+        themeMode = themeMode,
+        pathAndQuery = threadPagePath(deviceId, threadId),
+        stayOnPath = { path -> isThreadDocumentPath(path) && path.contains(threadId) },
+        title = "Thread",
+        backLabel = "Back to workspaces",
+        testTag = "threadWebView",
+        sessionName = sessionName,
+        onBack = onBack,
+        onOpenNav = onOpenNav,
+        onOpenAccount = onOpenAccount,
+        onLeave = onLeaveThread,
+        onNativeClose = onBack,
+        onAttached = {
+            ActiveThreadTracker.current = OpenThreadRef(deviceId, threadId)
+        },
+        onDetached = {
             if (ActiveThreadTracker.current?.threadId == threadId) {
                 ActiveThreadTracker.current = null
             }
-        }
+        },
+    )
+}
+
+@Composable
+fun SettingsWebScreen(
+    store: SessionStore,
+    deviceId: String,
+    themeMode: ThemeMode,
+    sessionName: String? = null,
+    onBack: () -> Unit,
+    onOpenNav: () -> Unit,
+    onOpenAccount: () -> Unit,
+    onLeave: (AppRoute) -> Unit,
+    onPrefs: (theme: String?, autoCollapse: Boolean?) -> Unit = { _, _ -> },
+) {
+    RelayWebScreen(
+        store = store,
+        deviceId = deviceId,
+        themeMode = themeMode,
+        pathAndQuery = "/relay-settings?nativeApp=1&relay=1",
+        stayOnPath = { path -> path == "/relay-settings" },
+        title = "Settings",
+        backLabel = "Back",
+        testTag = "settingsDialog",
+        sessionName = sessionName,
+        onBack = {
+            readRelayWebPrefs(onPrefs)
+            onBack()
+        },
+        onOpenNav = onOpenNav,
+        onOpenAccount = onOpenAccount,
+        onLeave = {
+            readRelayWebPrefs(onPrefs)
+            onLeave(it)
+        },
+        onNativeClose = {
+            readRelayWebPrefs(onPrefs)
+            onBack()
+        },
+    )
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun RelayWebScreen(
+    store: SessionStore,
+    deviceId: String,
+    themeMode: ThemeMode,
+    pathAndQuery: String,
+    stayOnPath: (String) -> Boolean,
+    title: String,
+    backLabel: String,
+    testTag: String,
+    sessionName: String?,
+    onBack: () -> Unit,
+    onOpenNav: () -> Unit,
+    onOpenAccount: () -> Unit,
+    onLeave: (AppRoute) -> Unit,
+    onNativeClose: () -> Unit,
+    onAttached: () -> Unit = {},
+    onDetached: () -> Unit = {},
+) {
+    val colors = rcColors
+    var error by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(pathAndQuery) {
+        onAttached()
+        onDispose { onDetached() }
     }
-    Box(
+    Column(
         Modifier
             .fillMaxSize()
             .background(colors.appBg)
-            .testTag("threadWebView"),
+            .statusBarsPadding()
+            .navigationBarsPadding(),
     ) {
-        key(deviceId, threadId, store.relayUrl) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { context ->
-                    WebView(context).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                        )
-                        setBackgroundColor(colors.appBg.toArgb())
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                        settings.cacheMode = WebSettings.LOAD_DEFAULT
-                        CookieManager.getInstance().setAcceptCookie(true)
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                        webChromeClient = WebChromeClient()
-                        webViewClient = ThreadLeaveClient(
-                            deviceId = deviceId,
-                            threadId = threadId,
-                            onLeaveThread = onLeaveThread,
-                            onError = { error = it },
-                            inject = { view -> injectSession(view, store, deviceId, themeMode) },
-                        )
-                        installDocumentStartScript(this, store, deviceId, themeMode)
-                        loadThreadPage(this, store, deviceId, threadId)
-                    }
-                },
-                update = { /* Recreated by key() when the thread target changes. */ },
-            )
+        ProductHeader(
+            title = title,
+            backLabel = backLabel,
+            onBack = onBack,
+            onOpenNav = onOpenNav,
+            onOpenAccount = onOpenAccount,
+            accountLabel = sessionName,
+        )
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxSize()
+                .testTag(testTag),
+        ) {
+            key(pathAndQuery, store.relayUrl) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { context ->
+                        WebView(context).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            overScrollMode = View.OVER_SCROLL_NEVER
+                            setBackgroundColor(colors.appBg.toArgb())
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.databaseEnabled = true
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            settings.cacheMode = WebSettings.LOAD_DEFAULT
+                            CookieManager.getInstance().setAcceptCookie(true)
+                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                            webChromeClient = WebChromeClient()
+                            webViewClient = RelayLeaveClient(
+                                deviceId = deviceId,
+                                stayOnPath = stayOnPath,
+                                onLeave = onLeave,
+                                onNativeClose = onNativeClose,
+                                onError = { error = it },
+                                inject = { view -> injectSession(view, store, deviceId, themeMode) },
+                            )
+                            installDocumentStartScript(this, store, deviceId, themeMode)
+                            loadRelayPage(this, store, pathAndQuery)
+                            lastWebView = this
+                        }
+                    },
+                    update = { /* Recreated by key() when the target changes. */ },
+                )
+            }
+            if (error != null) {
+                Text(
+                    error!!,
+                    color = colors.dangerFg,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(16.dp),
+                )
+            }
         }
-        if (error != null) {
-            Text(
-                error!!,
-                color = colors.dangerFg,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(16.dp),
-            )
+    }
+}
+
+private var lastWebView: WebView? = null
+
+internal fun readRelayWebPrefs(onPrefs: (theme: String?, autoCollapse: Boolean?) -> Unit) {
+    val view = lastWebView ?: return onPrefs(null, null)
+    view.evaluateJavascript(
+        """(function(){
+          try {
+            return JSON.stringify({
+              theme: localStorage.getItem('remote-codex-theme-mode'),
+              collapse: localStorage.getItem('remote-codex-auto-collapse-completed-turns')
+            });
+          } catch (e) { return '{}'; }
+        })()""",
+    ) { raw ->
+        val parsed = runCatching {
+            val value = org.json.JSONTokener(raw ?: "{}").nextValue()
+            when (value) {
+                is org.json.JSONObject -> value
+                is String -> org.json.JSONObject(value)
+                else -> org.json.JSONObject()
+            }
+        }.getOrNull()
+        val theme = parsed?.optString("theme")?.takeIf { it in setOf("light", "dark", "system") }
+        val collapse = when (parsed?.optString("collapse")) {
+            "true" -> true
+            "false" -> false
+            else -> null
         }
+        onPrefs(theme, collapse)
     }
 }
 
@@ -138,18 +279,20 @@ fun nativeRouteForWebPath(deviceId: String, path: String, query: String?): AppRo
     }
     if (path == "/relay-devices") return AppRoute.Devices
     if (path == "/relay-account") return AppRoute.Account
+    if (path == "/relay-settings") return AppRoute.Settings
     if (path == "/" || path == "/relay-portal") return AppRoute.Home
     return null
 }
 
-private class ThreadLeaveClient(
+private class RelayLeaveClient(
     private val deviceId: String,
-    private val threadId: String,
-    private val onLeaveThread: (AppRoute) -> Unit,
+    private val stayOnPath: (String) -> Boolean,
+    private val onLeave: (AppRoute) -> Unit,
+    private val onNativeClose: () -> Unit,
     private val onError: (String) -> Unit,
     private val inject: (WebView) -> Unit,
 ) : WebViewClient() {
-    private var sawThreadPath = false
+    private var sawTargetPath = false
 
     override fun shouldOverrideUrlLoading(
         view: WebView,
@@ -160,12 +303,12 @@ private class ThreadLeaveClient(
     }
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-        markThreadPath(url)
+        markTargetPath(url)
         inject(view)
     }
 
     override fun onPageFinished(view: WebView, url: String) {
-        markThreadPath(url)
+        markTargetPath(url)
         inject(view)
     }
 
@@ -175,31 +318,33 @@ private class ThreadLeaveClient(
         errorResult: android.webkit.WebResourceError,
     ) {
         if (request.isForMainFrame) {
-            onError(errorResult.description?.toString() ?: "Unable to load thread.")
+            onError(errorResult.description?.toString() ?: "Unable to load page.")
         }
     }
 
-    private fun markThreadPath(url: String?) {
+    private fun markTargetPath(url: String?) {
         val path = android.net.Uri.parse(url ?: return).path.orEmpty()
-        if (isThreadDocumentPath(path)) {
-            sawThreadPath = true
+        if (stayOnPath(path)) {
+            sawTargetPath = true
         }
     }
 
     private fun leaveIfNative(url: String?): Boolean {
         val uri = android.net.Uri.parse(url ?: return false)
         val path = uri.path.orEmpty()
-        markThreadPath(url)
-        // Bootstrap and RelayGate redirects land on `/` or `/relay-portal`. Mapping
-        // those to native Home pops the WebView (black screen → Choose a device).
-        if (!sawThreadPath || path.isEmpty() || path == "/" || path == "/relay-portal") {
+        markTargetPath(url)
+        if (path == "/__native/close") {
+            onNativeClose()
+            return true
+        }
+        if (!sawTargetPath || path.isEmpty() || path == "/" || path == "/relay-portal") {
+            return false
+        }
+        if (stayOnPath(path)) {
             return false
         }
         val leave = nativeRouteForWebPath(deviceId, path, uri.query) ?: return false
-        if (leave is AppRoute.ThreadDetail && leave.threadId == threadId) {
-            return false
-        }
-        onLeaveThread(leave)
+        onLeave(leave)
         return true
     }
 }
@@ -212,20 +357,19 @@ private fun isThreadDocumentPath(path: String): Boolean {
     return id.isNotBlank() && id != "new" && id != "import"
 }
 
-private fun threadPageUrl(origin: String, deviceId: String, threadId: String): String {
+private fun threadPagePath(deviceId: String, threadId: String): String {
     val device = java.net.URLEncoder.encode(deviceId, "UTF-8")
     val thread = java.net.URLEncoder.encode(threadId, "UTF-8")
-    return "${origin.trimEnd('/')}/devices/$device/threads/$thread?nativeApp=1&relay=1"
+    return "/devices/$device/threads/$thread?nativeApp=1&relay=1"
 }
 
-private fun loadThreadPage(
+private fun loadRelayPage(
     view: WebView,
     store: SessionStore,
-    deviceId: String,
-    threadId: String,
+    pathAndQuery: String,
 ) {
     val origin = store.relayUrl.trimEnd('/')
-    val target = threadPageUrl(origin, deviceId, threadId)
+    val target = origin + pathAndQuery.let { if (it.startsWith("/")) it else "/$it" }
     val manager = CookieManager.getInstance()
     manager.setAcceptCookie(true)
     manager.setAcceptThirdPartyCookies(view, true)
