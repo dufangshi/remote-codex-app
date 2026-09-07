@@ -19,6 +19,19 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    val releaseStoreFile = System.getenv("REMOTE_CODEX_ANDROID_STORE_FILE")
+    if (!releaseStoreFile.isNullOrBlank()) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = System.getenv("REMOTE_CODEX_ANDROID_STORE_PASSWORD").orEmpty()
+                keyAlias = System.getenv("REMOTE_CODEX_ANDROID_KEY_ALIAS") ?: "remote-codex-release"
+                keyPassword = System.getenv("REMOTE_CODEX_ANDROID_KEY_PASSWORD")
+                    ?: System.getenv("REMOTE_CODEX_ANDROID_STORE_PASSWORD").orEmpty()
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -26,6 +39,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (!releaseStoreFile.isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         debug {
             applicationIdSuffix = ".debug"

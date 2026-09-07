@@ -1,8 +1,12 @@
 # Remote Codex App
 
-Independent Android and iOS clients for [Remote Codex](https://github.com) relay mode.
+Independent Android and iOS clients for [Remote Codex](https://github.com/dufangshi/remoteCodex) relay mode.
 
 The outer shell is native and follows the public web UI: the same screen stack, back targets, copy, and visual language. Thread conversation UI is the live relay web thread page inside a WebView.
+
+## Download
+
+Signed Android APKs are published on [GitHub Releases](https://github.com/dufangshi/remote-codex-app/releases). Package id is `com.remotecodex.app` (this rewrite is not an in-place update of the old `com.remotecodex.android` APK).
 
 ## Screens
 
