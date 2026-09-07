@@ -99,6 +99,7 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         let key = "\(deviceId)|\(threadId)|\(store.relayUrl)"
         guard key != loadedKey else { return }
         loadedKey = key
+        interceptLeaves = false
 
         let script = WKUserScript(source: Self.injectionJS(store: store, deviceId: deviceId, themeMode: themeMode), injectionTime: .atDocumentStart, forMainFrameOnly: false)
         let controller = WKUserContentController()
@@ -129,19 +130,11 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         webView = web
 
         let origin = store.relayUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let target = "\(origin)/devices/\(enc(deviceId))/threads/\(enc(threadId))?nativeApp=1"
-        let html = """
-        <!doctype html>
-        <meta charset="utf-8">
-        <title>Thread</title>
-        <body>Thread</body>
-        <script>
-        \(Self.injectionJS(store: store, deviceId: deviceId, themeMode: themeMode))
-        try { location.replace(\(Self.jsString(target))); } catch (e) {}
-        </script>
-        """
-        DispatchQueue.main.async { [weak web] in
-            web?.loadHTMLString(html, baseURL: URL(string: origin + "/"))
+        let target = "\(origin)/devices/\(enc(deviceId))/threads/\(enc(threadId))?nativeApp=1&relay=1"
+        guard let url = URL(string: target) else { return }
+        Self.installRelaySessionCookie(store: store, dataStore: config.websiteDataStore) { [weak self, weak web] in
+            guard let self, self.loadedKey == key else { return }
+            web?.load(URLRequest(url: url))
         }
     }
 
@@ -156,7 +149,13 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
             decisionHandler(.allow)
             return
         }
-        if url.scheme == "about" || url.path.isEmpty || url.path == "/" {
+        if let frame = navigationAction.targetFrame, !frame.isMainFrame {
+            decisionHandler(.allow)
+            return
+        }
+        // RelayGate may bounce to `/` or `/relay-portal` while the session cookie
+        // is settling. Those are not user navigation back to Choose a device.
+        if url.scheme == "about" || url.path.isEmpty || url.path == "/" || url.path == "/relay-portal" {
             decisionHandler(.allow)
             return
         }
@@ -180,11 +179,55 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 
+    private static func installRelaySessionCookie(
+        store: SessionStore,
+        dataStore: WKWebsiteDataStore,
+        completion: @escaping () -> Void
+    ) {
+        guard let origin = URL(string: store.relayUrl), let host = origin.host else {
+            completion()
+            return
+        }
+        let group = DispatchGroup()
+        if let existing = HTTPCookieStorage.shared.cookies(for: origin) {
+            for cookie in existing {
+                group.enter()
+                dataStore.httpCookieStore.setCookie(cookie) { group.leave() }
+            }
+        }
+        if !store.token.isEmpty {
+            var props: [HTTPCookiePropertyKey: Any] = [
+                .name: "remote_codex_relay_session",
+                .value: store.token,
+                .path: "/",
+                .domain: host,
+                .originURL: origin,
+            ]
+            if origin.scheme?.lowercased() == "https" {
+                props[.secure] = "TRUE"
+            }
+            props[HTTPCookiePropertyKey("HttpOnly")] = true
+            if #available(iOS 13.0, *) {
+                props[.sameSitePolicy] = HTTPCookieStringPolicy.sameSiteLax
+            }
+            if let cookie = HTTPCookie(properties: props) {
+                HTTPCookieStorage.shared.setCookie(cookie)
+                group.enter()
+                dataStore.httpCookieStore.setCookie(cookie) { group.leave() }
+            }
+        }
+        group.notify(queue: .main, execute: completion)
+    }
+
     private static func injectionJS(store: SessionStore, deviceId: String, themeMode: ThemeMode) -> String {
         """
+        window.__REMOTE_CODEX_BOOTSTRAP__ = Object.assign(
+          { mode: 'relay', relayApiBase: '/relay' },
+          window.__REMOTE_CODEX_BOOTSTRAP__ || {}
+        );
         try {
           localStorage.setItem('remote-codex-relay-mode', 'true');
-          localStorage.setItem('remote-codex-relay-token', \(jsString(store.token)));
+          localStorage.removeItem('remote-codex-relay-token');
           localStorage.setItem('remote-codex-relay-device-id', \(jsString(deviceId)));
           localStorage.setItem('remote-codex-theme-mode', \(jsString(themeMode.rawValue)));
           localStorage.setItem('remote-codex-auto-collapse-completed-turns', \(jsString(store.autoCollapseCompletedTurns ? "true" : "false")));

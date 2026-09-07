@@ -17,15 +17,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import com.remotecodex.app.data.ApiClient
 import com.remotecodex.app.data.SessionStore
 import com.remotecodex.app.notify.ActiveThreadTracker
@@ -60,83 +64,38 @@ fun ThreadWebScreen(
             .background(colors.appBg)
             .testTag("threadWebView"),
     ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                WebView(context).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.databaseEnabled = true
-                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    settings.cacheMode = WebSettings.LOAD_DEFAULT
-                    CookieManager.getInstance().setAcceptCookie(true)
-                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                    webChromeClient = WebChromeClient()
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(
-                            view: WebView,
-                            request: WebResourceRequest,
-                        ): Boolean {
-                            val uri = request.url
-                            val path = uri.path.orEmpty()
-                            val leave = nativeRouteForWebPath(deviceId, path, uri.query)
-                            if (leave != null && leave !is AppRoute.ThreadDetail) {
-                                onLeaveThread(leave)
-                                return true
-                            }
-                            if (leave is AppRoute.ThreadDetail && leave.threadId != threadId) {
-                                onLeaveThread(leave)
-                                return true
-                            }
-                            return false
-                        }
-
-                        override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-                            injectSession(view, store, deviceId, themeMode)
-                        }
-
-                        override fun onPageFinished(view: WebView, url: String) {
-                            injectSession(view, store, deviceId, themeMode)
-                            val path = android.net.Uri.parse(url).path.orEmpty()
-                            val leave = nativeRouteForWebPath(deviceId, path, android.net.Uri.parse(url).query)
-                            if (leave != null && leave !is AppRoute.ThreadDetail) {
-                                onLeaveThread(leave)
-                            }
-                        }
-
-                        override fun onReceivedError(
-                            view: WebView,
-                            request: WebResourceRequest,
-                            errorResult: android.webkit.WebResourceError,
-                        ) {
-                            if (request.isForMainFrame) {
-                                error = errorResult.description?.toString() ?: "Unable to load thread."
-                            }
-                        }
+        key(deviceId, threadId, store.relayUrl) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { context ->
+                    WebView(context).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                        setBackgroundColor(colors.appBg.toArgb())
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.cacheMode = WebSettings.LOAD_DEFAULT
+                        CookieManager.getInstance().setAcceptCookie(true)
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        webChromeClient = WebChromeClient()
+                        webViewClient = ThreadLeaveClient(
+                            deviceId = deviceId,
+                            threadId = threadId,
+                            onLeaveThread = onLeaveThread,
+                            onError = { error = it },
+                            inject = { view -> injectSession(view, store, deviceId, themeMode) },
+                        )
+                        installDocumentStartScript(this, store, deviceId, themeMode)
+                        loadThreadPage(this, store, deviceId, threadId)
                     }
-                    val bootstrap = bootstrapHtml(
-                        origin = store.relayUrl,
-                        token = store.token,
-                        deviceId = deviceId,
-                        threadId = threadId,
-                        theme = when (themeMode) {
-                            ThemeMode.Light -> "light"
-                            ThemeMode.Dark -> "dark"
-                            ThemeMode.System -> "system"
-                        },
-                        autoCollapse = store.autoCollapseCompletedTurns,
-                    )
-                    loadDataWithBaseURL(store.relayUrl.trimEnd('/') + "/", bootstrap, "text/html", "utf-8", null)
-                }
-            },
-            update = { view ->
-                // Keep the existing document; token injection is handled on page events.
-            },
-        )
+                },
+                update = { /* Recreated by key() when the thread target changes. */ },
+            )
+        }
         if (error != null) {
             Text(
                 error!!,
@@ -183,47 +142,157 @@ fun nativeRouteForWebPath(deviceId: String, path: String, query: String?): AppRo
     return null
 }
 
+private class ThreadLeaveClient(
+    private val deviceId: String,
+    private val threadId: String,
+    private val onLeaveThread: (AppRoute) -> Unit,
+    private val onError: (String) -> Unit,
+    private val inject: (WebView) -> Unit,
+) : WebViewClient() {
+    private var sawThreadPath = false
+
+    override fun shouldOverrideUrlLoading(
+        view: WebView,
+        request: WebResourceRequest,
+    ): Boolean {
+        if (!request.isForMainFrame) return false
+        return leaveIfNative(request.url.toString())
+    }
+
+    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+        markThreadPath(url)
+        inject(view)
+    }
+
+    override fun onPageFinished(view: WebView, url: String) {
+        markThreadPath(url)
+        inject(view)
+    }
+
+    override fun onReceivedError(
+        view: WebView,
+        request: WebResourceRequest,
+        errorResult: android.webkit.WebResourceError,
+    ) {
+        if (request.isForMainFrame) {
+            onError(errorResult.description?.toString() ?: "Unable to load thread.")
+        }
+    }
+
+    private fun markThreadPath(url: String?) {
+        val path = android.net.Uri.parse(url ?: return).path.orEmpty()
+        if (isThreadDocumentPath(path)) {
+            sawThreadPath = true
+        }
+    }
+
+    private fun leaveIfNative(url: String?): Boolean {
+        val uri = android.net.Uri.parse(url ?: return false)
+        val path = uri.path.orEmpty()
+        markThreadPath(url)
+        // Bootstrap and RelayGate redirects land on `/` or `/relay-portal`. Mapping
+        // those to native Home pops the WebView (black screen → Choose a device).
+        if (!sawThreadPath || path.isEmpty() || path == "/" || path == "/relay-portal") {
+            return false
+        }
+        val leave = nativeRouteForWebPath(deviceId, path, uri.query) ?: return false
+        if (leave is AppRoute.ThreadDetail && leave.threadId == threadId) {
+            return false
+        }
+        onLeaveThread(leave)
+        return true
+    }
+}
+
+private fun isThreadDocumentPath(path: String): Boolean {
+    val match = Regex("^/devices/[^/]+/threads/([^/]+)/?$").find(path)
+        ?: Regex("^/threads/([^/]+)/?$").find(path)
+        ?: return false
+    val id = match.groupValues.last()
+    return id.isNotBlank() && id != "new" && id != "import"
+}
+
+private fun threadPageUrl(origin: String, deviceId: String, threadId: String): String {
+    val device = java.net.URLEncoder.encode(deviceId, "UTF-8")
+    val thread = java.net.URLEncoder.encode(threadId, "UTF-8")
+    return "${origin.trimEnd('/')}/devices/$device/threads/$thread?nativeApp=1&relay=1"
+}
+
+private fun loadThreadPage(
+    view: WebView,
+    store: SessionStore,
+    deviceId: String,
+    threadId: String,
+) {
+    val origin = store.relayUrl.trimEnd('/')
+    val target = threadPageUrl(origin, deviceId, threadId)
+    val manager = CookieManager.getInstance()
+    manager.setAcceptCookie(true)
+    manager.setAcceptThirdPartyCookies(view, true)
+    val started = java.util.concurrent.atomic.AtomicBoolean(false)
+    fun start() {
+        if (!started.compareAndSet(false, true)) return
+        view.post { view.loadUrl(target) }
+    }
+    val cookie = relaySessionCookie(origin, store.token)
+    if (cookie != null) {
+        manager.setCookie("$origin/", cookie) { _ ->
+            manager.flush()
+            start()
+        }
+        view.postDelayed({ start() }, 750)
+    } else {
+        start()
+    }
+}
+
+private fun relaySessionCookie(origin: String, token: String): String? {
+    if (token.isBlank()) return null
+    val secure = if (origin.startsWith("https", ignoreCase = true)) "; Secure" else ""
+    return "remote_codex_relay_session=$token; Path=/; HttpOnly; SameSite=Lax$secure"
+}
+
+private fun installDocumentStartScript(
+    view: WebView,
+    store: SessionStore,
+    deviceId: String,
+    themeMode: ThemeMode,
+) {
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+        return
+    }
+    val origin = store.relayUrl.trimEnd('/')
+    WebViewCompat.addDocumentStartJavaScript(
+        view,
+        sessionScript(store, deviceId, themeMode),
+        setOf(origin),
+    )
+}
+
 private fun injectSession(view: WebView, store: SessionStore, deviceId: String, themeMode: ThemeMode) {
+    view.evaluateJavascript(sessionScript(store, deviceId, themeMode), null)
+}
+
+private fun sessionScript(store: SessionStore, deviceId: String, themeMode: ThemeMode): String {
     val theme = when (themeMode) {
         ThemeMode.Light -> "light"
         ThemeMode.Dark -> "dark"
         ThemeMode.System -> "system"
     }
-    val script = """
-        try {
-          localStorage.setItem('remote-codex-relay-mode', 'true');
-          localStorage.setItem('remote-codex-relay-token', ${jsString(store.token)});
-          localStorage.setItem('remote-codex-relay-device-id', ${jsString(deviceId)});
-          localStorage.setItem('remote-codex-theme-mode', ${jsString(theme)});
-          localStorage.setItem('remote-codex-auto-collapse-completed-turns', ${jsString(if (store.autoCollapseCompletedTurns) "true" else "false")});
-        } catch (e) {}
-    """.trimIndent()
-    view.evaluateJavascript(script, null)
-}
-
-private fun bootstrapHtml(
-    origin: String,
-    token: String,
-    deviceId: String,
-    threadId: String,
-    theme: String,
-    autoCollapse: Boolean,
-): String {
-    val target = "$origin/devices/${java.net.URLEncoder.encode(deviceId, "UTF-8")}/threads/${java.net.URLEncoder.encode(threadId, "UTF-8")}?nativeApp=1"
     return """
-        <!doctype html>
-        <meta charset="utf-8">
-        <title>Remote Codex</title>
-        <script>
+        (function () {
+          window.__REMOTE_CODEX_BOOTSTRAP__ = Object.assign(
+            { mode: 'relay', relayApiBase: '/relay' },
+            window.__REMOTE_CODEX_BOOTSTRAP__ || {}
+          );
           try {
             localStorage.setItem('remote-codex-relay-mode', 'true');
-            localStorage.setItem('remote-codex-relay-token', ${jsString(token)});
+            localStorage.removeItem('remote-codex-relay-token');
             localStorage.setItem('remote-codex-relay-device-id', ${jsString(deviceId)});
             localStorage.setItem('remote-codex-theme-mode', ${jsString(theme)});
-            localStorage.setItem('remote-codex-auto-collapse-completed-turns', ${jsString(if (autoCollapse) "true" else "false")});
+            localStorage.setItem('remote-codex-auto-collapse-completed-turns', ${jsString(if (store.autoCollapseCompletedTurns) "true" else "false")});
           } catch (e) {}
-          location.replace(${jsString(target)});
-        </script>
+        })();
     """.trimIndent()
 }
 
