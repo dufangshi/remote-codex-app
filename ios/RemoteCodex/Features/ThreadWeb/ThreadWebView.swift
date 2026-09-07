@@ -23,9 +23,9 @@ struct ThreadScreen: View {
                 accountLabel: sessionName
             )
             Text("Thread")
-                .font(.system(size: 11, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 2)
+                .font(.system(size: 1))
+                .frame(height: 0)
+                .opacity(0)
                 .accessibilityIdentifier("threadTitle")
             ThreadWebView(
                 store: store,
@@ -78,8 +78,9 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         view.backgroundColor = .clear
         view.accessibilityIdentifier = "threadScreen"
         accessibilityProbe.text = "Thread"
-        accessibilityProbe.font = .systemFont(ofSize: 11, weight: .semibold)
+        accessibilityProbe.font = .systemFont(ofSize: 1)
         accessibilityProbe.textAlignment = .center
+        accessibilityProbe.isHidden = true
         accessibilityProbe.isAccessibilityElement = true
         accessibilityProbe.accessibilityIdentifier = "threadWebView"
         accessibilityProbe.accessibilityLabel = "Thread"
@@ -89,7 +90,7 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
             accessibilityProbe.topAnchor.constraint(equalTo: view.topAnchor),
             accessibilityProbe.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             accessibilityProbe.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            accessibilityProbe.heightAnchor.constraint(equalToConstant: 8),
+            accessibilityProbe.heightAnchor.constraint(equalToConstant: 0),
         ])
     }
 
@@ -119,10 +120,13 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         web.isOpaque = false
         web.backgroundColor = .clear
         web.accessibilityIdentifier = "threadWebView"
+        if #available(iOS 16.4, *) {
+            web.isInspectable = true
+        }
         web.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(web)
         NSLayoutConstraint.activate([
-            web.topAnchor.constraint(equalTo: accessibilityProbe.bottomAnchor),
+            web.topAnchor.constraint(equalTo: view.topAnchor),
             web.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             web.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             web.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -179,23 +183,11 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 
-    private static func installRelaySessionCookie(
-        store: SessionStore,
-        dataStore: WKWebsiteDataStore,
-        completion: @escaping () -> Void
-    ) {
-        guard let origin = URL(string: store.relayUrl), let host = origin.host else {
-            completion()
-            return
+    private static func sessionCookie(store: SessionStore) -> HTTPCookie? {
+        guard let origin = URL(string: store.relayUrl), let host = origin.host, !store.token.isEmpty else {
+            return nil
         }
-        let group = DispatchGroup()
-        if let existing = HTTPCookieStorage.shared.cookies(for: origin) {
-            for cookie in existing {
-                group.enter()
-                dataStore.httpCookieStore.setCookie(cookie) { group.leave() }
-            }
-        }
-        if !store.token.isEmpty {
+        func make(_ extra: [HTTPCookiePropertyKey: Any]) -> HTTPCookie? {
             var props: [HTTPCookiePropertyKey: Any] = [
                 .name: "remote_codex_relay_session",
                 .value: store.token,
@@ -206,26 +198,50 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
             if origin.scheme?.lowercased() == "https" {
                 props[.secure] = "TRUE"
             }
-            props[HTTPCookiePropertyKey("HttpOnly")] = true
-            if #available(iOS 13.0, *) {
-                props[.sameSitePolicy] = HTTPCookieStringPolicy.sameSiteLax
+            extra.forEach { props[$0] = $1 }
+            return HTTPCookie(properties: props)
+        }
+        if #available(iOS 13.0, *) {
+            if let cookie = make([.sameSitePolicy: HTTPCookieStringPolicy.sameSiteLax]) {
+                return cookie
             }
-            if let cookie = HTTPCookie(properties: props) {
-                HTTPCookieStorage.shared.setCookie(cookie)
+        }
+        return make([:])
+    }
+
+    private static func installRelaySessionCookie(
+        store: SessionStore,
+        dataStore: WKWebsiteDataStore,
+        completion: @escaping () -> Void
+    ) {
+        guard let origin = URL(string: store.relayUrl) else {
+            completion()
+            return
+        }
+        let group = DispatchGroup()
+        if let existing = HTTPCookieStorage.shared.cookies(for: origin) {
+            for cookie in existing where cookie.name != "remote_codex_relay_session" {
                 group.enter()
                 dataStore.httpCookieStore.setCookie(cookie) { group.leave() }
             }
+        }
+        if let cookie = sessionCookie(store: store) {
+            HTTPCookieStorage.shared.setCookie(cookie)
+            group.enter()
+            dataStore.httpCookieStore.setCookie(cookie) { group.leave() }
         }
         group.notify(queue: .main, execute: completion)
     }
 
     private static func injectionJS(store: SessionStore, deviceId: String, themeMode: ThemeMode) -> String {
-        """
+        let secure = store.relayUrl.lowercased().hasPrefix("https://") ? "; Secure" : ""
+        return """
         window.__REMOTE_CODEX_BOOTSTRAP__ = Object.assign(
           { mode: 'relay', relayApiBase: '/relay' },
           window.__REMOTE_CODEX_BOOTSTRAP__ || {}
         );
         try {
+          document.cookie = 'remote_codex_relay_session=' + \(jsString(store.token)) + '; path=/; SameSite=Lax\(secure)';
           localStorage.setItem('remote-codex-relay-mode', 'true');
           localStorage.removeItem('remote-codex-relay-token');
           localStorage.setItem('remote-codex-relay-device-id', \(jsString(deviceId)));

@@ -23,6 +23,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 
 class AgentEventService : Service() {
@@ -102,7 +103,9 @@ class AgentEventService : Service() {
             val previous = knownStatus[thread.id]
             knownStatus[thread.id] = thread.status
             val finished = thread.status in setOf("idle", "failed", "interrupted", "system_error")
-            if (finished && !notified.contains(thread.id) && (previous == "running" || previous == null)) {
+            val justFinished = previous == "running" ||
+                (previous == null && isRecent(thread.updatedAt))
+            if (finished && !notified.contains(thread.id) && justFinished) {
                 notified.add(thread.id)
                 val current = ActiveThreadTracker.current
                 if (current?.deviceId == deviceId && current.threadId == thread.id && RemoteCodexForeground.isForeground) {
@@ -117,8 +120,16 @@ class AgentEventService : Service() {
                     if (failed) "Agent run failed." else "Agent run finished.",
                     thread.id.hashCode(),
                 )
+            } else if (!notified.contains(thread.id)) {
+                notified.add(thread.id)
             }
         }
+    }
+
+    private fun isRecent(value: String?): Boolean {
+        if (value.isNullOrBlank()) return false
+        val instant = runCatching { Instant.parse(value) }.getOrNull() ?: return false
+        return Instant.now().epochSecond - instant.epochSecond < 30
     }
 
     private fun connect(api: ApiClient, store: SessionStore, deviceId: String) {
@@ -132,11 +143,17 @@ class AgentEventService : Service() {
                     if (event.type == "thread.updated") {
                         event.title()?.let { titles[event.threadId] = it }
                     }
-                    val completed = event.type == "thread.turn.completed" ||
-                        event.type == "thread.turn.failed" ||
-                        (event.type == "thread.updated" &&
-                            event.status() in setOf("idle", "failed", "interrupted", "system_error"))
+                    val status = event.status()
+                    val previous = knownStatus[event.threadId]
+                    if (status != null) {
+                        knownStatus[event.threadId] = status
+                    }
+                    val turnDone = event.type == "thread.turn.completed" || event.type == "thread.turn.failed"
+                    val finishedStatus = status in setOf("idle", "failed", "interrupted", "system_error")
+                    val completed = turnDone ||
+                        (event.type == "thread.updated" && finishedStatus && previous == "running")
                     if (!completed) return
+                    if (!notified.add(event.threadId)) return
                     val current = ActiveThreadTracker.current
                     val appForeground = RemoteCodexForeground.isForeground
                     if (current?.deviceId == deviceId && current.threadId == event.threadId && appForeground) {

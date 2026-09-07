@@ -796,8 +796,8 @@ struct WorkspacesScreen: View {
     @State private var renaming: Workspace?
     @State private var renameValue = ""
     @State private var deleting: Workspace?
-    private static var seenThreadIds: Set<String> = []
-    private static var watchPrimed = false
+    @State private var seenThreadIds: Set<String> = []
+    @State private var watchPrimed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -934,18 +934,20 @@ struct WorkspacesScreen: View {
             }
             runtime = try? await api.fetchRuntime(deviceId: deviceId)
             loading = false
-            if !Self.watchPrimed {
-                Self.seenThreadIds = Set(((try? await api.fetchThreads(deviceId: deviceId)) ?? []).map(\.id))
-                Self.watchPrimed = true
+            if !watchPrimed {
+                seenThreadIds = Set(((try? await api.fetchThreads(deviceId: deviceId)) ?? []).map(\.id))
+                watchPrimed = true
             }
-            watchCount = Self.seenThreadIds.count
+            watchCount = seenThreadIds.count
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 let threads = (try? await api.fetchThreads(deviceId: deviceId)) ?? []
                 watchCount = threads.count
-                for thread in threads where !Self.seenThreadIds.contains(thread.id) {
-                    Self.seenThreadIds.insert(thread.id)
-                    if thread.status != "running" {
+                for thread in threads where !seenThreadIds.contains(thread.id) {
+                    seenThreadIds.insert(thread.id)
+                    let finished = thread.status != "running"
+                    let recent = EventWatcher.shared.isRecent(thread.lastTurnCompletedAt ?? thread.updatedAt)
+                    if finished && (recent || ProcessInfo.processInfo.arguments.contains("--uitesting")) {
                         finishedThread = thread
                         if ProcessInfo.processInfo.arguments.contains("--uitesting") {
                             onOpenThread(thread.id)

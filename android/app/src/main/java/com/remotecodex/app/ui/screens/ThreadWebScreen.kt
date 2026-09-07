@@ -286,6 +286,7 @@ private fun sessionScript(store: SessionStore, deviceId: String, themeMode: Them
             window.__REMOTE_CODEX_BOOTSTRAP__ || {}
           );
           try {
+            document.cookie = 'remote_codex_relay_session=' + ${jsString(store.token)} + '; path=/; SameSite=Lax${if (store.relayUrl.startsWith("https", ignoreCase = true)) "; Secure" else ""}';
             localStorage.setItem('remote-codex-relay-mode', 'true');
             localStorage.removeItem('remote-codex-relay-token');
             localStorage.setItem('remote-codex-relay-device-id', ${jsString(deviceId)});

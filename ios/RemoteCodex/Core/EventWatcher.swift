@@ -54,6 +54,7 @@ final class EventWatcher: NSObject, URLSessionWebSocketDelegate {
     private var knownStatus: [String: String] = [:]
     private var notified: Set<String> = []
     private var primed = false
+    private var primedDevice: String?
     private var polling = false
 
     private func startPolling() {
@@ -78,6 +79,12 @@ final class EventWatcher: NSObject, URLSessionWebSocketDelegate {
             NSLog("E2E_POLL fetch failed %@", error.localizedDescription)
             return
         }
+        if primedDevice != store.deviceId {
+            primed = false
+            knownStatus.removeAll()
+            notified.removeAll()
+            primedDevice = store.deviceId
+        }
         NSLog("E2E_POLL device=%@ threads=%d primed=%d", store.deviceId, threads.count, primed ? 1 : 0)
         if !primed {
             for thread in threads {
@@ -94,7 +101,8 @@ final class EventWatcher: NSObject, URLSessionWebSocketDelegate {
             titles[thread.id] = thread.title ?? titles[thread.id] ?? "Thread"
             let finished = ["idle", "failed", "interrupted", "system_error"].contains(status)
             let wasRunning = previous == "running"
-            if finished && !notified.contains(thread.id) && (wasRunning || previous == nil) {
+            let justFinished = wasRunning || (previous == nil && isRecent(thread.lastTurnCompletedAt ?? thread.updatedAt))
+            if finished && !notified.contains(thread.id) && justFinished {
                 notified.insert(thread.id)
                 notify(
                     deviceId: store.deviceId,
@@ -102,11 +110,13 @@ final class EventWatcher: NSObject, URLSessionWebSocketDelegate {
                     title: thread.title ?? "Thread",
                     body: status == "failed" ? "Agent run failed." : "Agent run finished."
                 )
+            } else if !notified.contains(thread.id) {
+                notified.insert(thread.id)
             }
         }
     }
 
-    private func isRecent(_ value: String?) -> Bool {
+    func isRecent(_ value: String?) -> Bool {
         guard let value, let date = ISO8601DateFormatter().date(from: value) ?? ISO8601DateFormatter.full.date(from: value) else {
             return false
         }
@@ -150,10 +160,16 @@ final class EventWatcher: NSObject, URLSessionWebSocketDelegate {
             titles[event.threadId] = title
         }
         let status = event.payload?["status"]?.string
-        let completed = event.type == "thread.turn.completed"
-            || event.type == "thread.turn.failed"
-            || (event.type == "thread.updated" && ["idle", "failed", "interrupted", "system_error"].contains(status ?? ""))
+        let previous = knownStatus[event.threadId]
+        if let status {
+            knownStatus[event.threadId] = status
+        }
+        let turnDone = event.type == "thread.turn.completed" || event.type == "thread.turn.failed"
+        let finishedStatus = ["idle", "failed", "interrupted", "system_error"].contains(status ?? "")
+        let completed = turnDone || (event.type == "thread.updated" && finishedStatus && previous == "running")
         guard completed else { return }
+        if notified.contains(event.threadId) { return }
+        notified.insert(event.threadId)
         if isForeground,
            openThread?.threadId == event.threadId,
            openThread?.deviceId == store?.deviceId {
