@@ -72,6 +72,7 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
     var onLeave: ((AppRoute) -> Void)?
     private var loadedKey = ""
     private var interceptLeaves = false
+    private var lastInjection = ""
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -103,6 +104,7 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         interceptLeaves = false
 
         let scriptSource = Self.injectionJS(store: store, deviceId: deviceId, themeMode: themeMode)
+        lastInjection = scriptSource
         let script: WKUserScript
         if #available(iOS 14.0, *) {
             script = WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page)
@@ -125,10 +127,13 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         web.allowsBackForwardNavigationGestures = false
         web.isOpaque = false
         web.backgroundColor = .clear
+        web.scrollView.alwaysBounceHorizontal = false
+        web.scrollView.bounces = true
         web.accessibilityIdentifier = "threadWebView"
         if #available(iOS 16.4, *) {
             web.isInspectable = true
         }
+        bindEdgeBackGesture(web)
         web.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(web)
         NSLayoutConstraint.activate([
@@ -152,6 +157,22 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
         if webView.url?.path.contains("/threads/") == true {
             interceptLeaves = true
         }
+        if !lastInjection.isEmpty {
+            webView.evaluateJavaScript(lastInjection, completionHandler: nil)
+        }
+        bindEdgeBackGesture(webView)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if let webView {
+            bindEdgeBackGesture(webView)
+        }
+    }
+
+    private func bindEdgeBackGesture(_ web: WKWebView) {
+        guard let edge = EdgeBackSupport.gesture else { return }
+        web.scrollView.panGestureRecognizer.require(toFail: edge)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -247,6 +268,8 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
           window.__REMOTE_CODEX_BOOTSTRAP__ || {}
         );
         (function () {
+          if (window.__REMOTE_CODEX_NATIVE_SESSION__) return;
+          window.__REMOTE_CODEX_NATIVE_SESSION__ = true;
           var token = \(jsString(store.token));
           try {
             document.cookie = 'remote_codex_relay_session=' + token + '; path=/; SameSite=Lax\(secure)';
@@ -282,41 +305,46 @@ final class ThreadWebController: UIViewController, WKNavigationDelegate {
             };
           } catch (e) {}
           try {
-            var fake = { postMessage: function () {}, scriptURL: (location.origin || '') + '/', state: 'activated' };
+            var fake = {
+              postMessage: function () {},
+              scriptURL: (location.origin || '') + '/',
+              state: 'activated',
+              addEventListener: function () {},
+              removeEventListener: function () {},
+              onstatechange: null
+            };
             var dummyReg = {
               installing: null,
               waiting: null,
               active: fake,
               scope: (location.origin || '') + '/',
               update: function () { return Promise.resolve(); },
-              unregister: function () { return Promise.resolve(true); }
+              unregister: function () { return Promise.resolve(true); },
+              addEventListener: function () {},
+              removeEventListener: function () {}
             };
-            if (!('serviceWorker' in navigator) || !navigator.serviceWorker) {
+            var swShim = {
+              controller: fake,
+              ready: Promise.resolve(dummyReg),
+              register: function () { return Promise.resolve(dummyReg); },
+              getRegistration: function () { return Promise.resolve(dummyReg); },
+              getRegistrations: function () { return Promise.resolve([dummyReg]); },
+              addEventListener: function () {},
+              removeEventListener: function () {},
+              startMessages: function () {}
+            };
+            try {
               Object.defineProperty(navigator, 'serviceWorker', {
                 configurable: true,
-                value: {
-                  controller: fake,
-                  ready: Promise.resolve(dummyReg),
-                  register: function () { return Promise.resolve(dummyReg); },
-                  getRegistration: function () { return Promise.resolve(dummyReg); },
-                  getRegistrations: function () { return Promise.resolve([]); },
-                  addEventListener: function () {},
-                  removeEventListener: function () {},
-                  startMessages: function () {}
-                }
+                enumerable: true,
+                value: swShim
               });
-            } else {
+            } catch (replaceErr) {
               var sw = navigator.serviceWorker;
-              if (typeof sw.register === 'function') {
-                var origRegister = sw.register.bind(sw);
-                sw.register = function () {
-                  return origRegister.apply(null, arguments).catch(function () { return dummyReg; });
-                };
-              }
-              if (!sw.controller) {
-                try {
-                  Object.defineProperty(sw, 'controller', { configurable: true, get: function () { return fake; } });
-                } catch (e) {}
+              if (sw) {
+                try { sw.register = function () { return Promise.resolve(dummyReg); }; } catch (e) {}
+                try { Object.defineProperty(sw, 'ready', { configurable: true, get: function () { return Promise.resolve(dummyReg); } }); } catch (e) {}
+                try { Object.defineProperty(sw, 'controller', { configurable: true, get: function () { return fake; } }); } catch (e) {}
               }
             }
           } catch (e) {}

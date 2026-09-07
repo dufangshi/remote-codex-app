@@ -1,55 +1,106 @@
 import SwiftUI
 import UIKit
 
+enum EdgeBackSupport {
+    static weak var gesture: UIPanGestureRecognizer?
+}
+
+/// Window-level left-edge pan. Taps still reach buttons; WKWebView's pan waits
+/// for this gesture to fail (`require(toFail:)` in ThreadWebController).
 struct ScreenEdgeBackSwipe: UIViewRepresentable {
     var enabled: Bool
-    var onBack: () -> Void
+    var onChanged: (CGFloat) -> Void
+    var onEnded: (CGFloat, CGFloat) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onBack: onBack)
+        Coordinator(onChanged: onChanged, onEnded: onEnded)
     }
 
-    func makeUIView(context: Context) -> UIView {
+    func makeUIView(context: Context) -> EdgeBackView {
         let view = EdgeBackView()
         view.isUserInteractionEnabled = false
-        let gesture = UIScreenEdgePanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handle))
-        gesture.edges = .left
+        let gesture = LeftEdgePanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handle))
+        gesture.maximumNumberOfTouches = 1
+        gesture.cancelsTouchesInView = false
+        gesture.delaysTouchesBegan = false
+        gesture.delaysTouchesEnded = false
+        gesture.delegate = context.coordinator
         view.edgeGesture = gesture
+        context.coordinator.gesture = gesture
+        EdgeBackSupport.gesture = gesture
         return view
     }
 
-    func updateUIView(_ view: UIView, context: Context) {
-        context.coordinator.onBack = onBack
+    func updateUIView(_ view: EdgeBackView, context: Context) {
+        context.coordinator.onChanged = onChanged
+        context.coordinator.onEnded = onEnded
         context.coordinator.enabled = enabled
-        guard let view = view as? EdgeBackView else { return }
-        if enabled {
-            view.attach(to: view.window)
-        }
+        context.coordinator.gesture?.isEnabled = enabled
+        view.attach(to: view.window)
+        EdgeBackSupport.gesture = context.coordinator.gesture
     }
 
-    final class Coordinator {
-        var onBack: () -> Void
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onChanged: (CGFloat) -> Void
+        var onEnded: (CGFloat, CGFloat) -> Void
         var enabled = true
-        init(onBack: @escaping () -> Void) { self.onBack = onBack }
+        weak var gesture: UIPanGestureRecognizer?
 
-        @objc func handle(_ gesture: UIScreenEdgePanGestureRecognizer) {
-            guard enabled, gesture.state == .ended else { return }
-            let translation = gesture.translation(in: gesture.view)
-            if translation.x > 48 {
-                onBack()
+        init(onChanged: @escaping (CGFloat) -> Void, onEnded: @escaping (CGFloat, CGFloat) -> Void) {
+            self.onChanged = onChanged
+            self.onEnded = onEnded
+        }
+
+        @objc func handle(_ gesture: UIPanGestureRecognizer) {
+            guard enabled else { return }
+            let translation = gesture.translation(in: gesture.view).x
+            let velocity = gesture.velocity(in: gesture.view).x
+            switch gesture.state {
+            case .began, .changed:
+                onChanged(max(0, translation))
+            case .ended, .cancelled, .failed:
+                onEnded(max(0, translation), velocity)
+            default:
+                break
             }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard enabled, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: pan.view)
+            if abs(velocity.y) > abs(velocity.x) && abs(velocity.y) > 80 { return false }
+            return velocity.x >= -40
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            false
         }
     }
 }
 
-private final class EdgeBackView: UIView {
-    var edgeGesture: UIScreenEdgePanGestureRecognizer?
+final class LeftEdgePanGestureRecognizer: UIPanGestureRecognizer {
+    var edgeWidth: CGFloat = 28
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let touch = touches.first, let view {
+            if touch.location(in: view).x > edgeWidth {
+                state = .failed
+                return
+            }
+        }
+        super.touchesBegan(touches, with: event)
+    }
+}
+
+final class EdgeBackView: UIView {
+    var edgeGesture: UIPanGestureRecognizer?
 
     func attach(to window: UIWindow?) {
         guard let gesture = edgeGesture else { return }
         if let window, gesture.view !== window {
             gesture.view?.removeGestureRecognizer(gesture)
             window.addGestureRecognizer(gesture)
+            EdgeBackSupport.gesture = gesture
         }
     }
 
@@ -92,67 +143,6 @@ struct RcButton: View {
         }
         .disabled(!enabled)
         .accessibilityIdentifier(identifier ?? label)
-    }
-}
-
-struct ConfirmDialog: View {
-    let title: String
-    let description: String
-    var confirmLabel = "Confirm"
-    var busy = false
-    var onConfirm: () -> Void
-    var onCancel: () -> Void
-    @Environment(\.rcColors) private var colors
-
-    var body: some View {
-        ZStack {
-            colors.overlay.ignoresSafeArea().onTapGesture(perform: onCancel)
-            VStack(alignment: .leading, spacing: 12) {
-                Text(title).font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
-                Text(description).font(.system(size: 14)).foregroundStyle(colors.fgMuted)
-                HStack(spacing: 8) {
-                    RcButton(label: "Cancel", primary: false, action: onCancel)
-                    RcButton(label: busy ? "Working..." : confirmLabel, enabled: !busy, identifier: "confirmOk", action: onConfirm)
-                }
-            }
-            .padding(20)
-            .frame(maxWidth: 420)
-            .background(colors.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
-            .padding(24)
-        }
-        .accessibilityIdentifier("confirmDialog")
-    }
-}
-
-struct PromptDialog: View {
-    let title: String
-    let label: String
-    @Binding var value: String
-    var busy = false
-    var onSubmit: () -> Void
-    var onCancel: () -> Void
-    @Environment(\.rcColors) private var colors
-
-    var body: some View {
-        ZStack {
-            colors.overlay.ignoresSafeArea().onTapGesture(perform: onCancel)
-            VStack(alignment: .leading, spacing: 12) {
-                Text(title).font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
-                RcField(label: label, text: $value, identifier: "dialogField")
-                HStack(spacing: 8) {
-                    RcButton(label: "Cancel", primary: false, action: onCancel)
-                    RcButton(label: busy ? "Saving..." : "Save", enabled: !busy && !value.trimmingCharacters(in: .whitespaces).isEmpty, identifier: "dialogSave", action: onSubmit)
-                }
-            }
-            .padding(20)
-            .frame(maxWidth: 420)
-            .background(colors.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
-            .padding(24)
-        }
     }
 }
 
@@ -247,6 +237,67 @@ struct RcField: View {
     }
 }
 
+struct ConfirmDialog: View {
+    let title: String
+    let description: String
+    var confirmLabel = "Confirm"
+    var busy = false
+    var onConfirm: () -> Void
+    var onCancel: () -> Void
+    @Environment(\.rcColors) private var colors
+
+    var body: some View {
+        ZStack {
+            colors.overlay.ignoresSafeArea().onTapGesture(perform: onCancel)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title).font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
+                Text(description).font(.system(size: 14)).foregroundStyle(colors.fgMuted)
+                HStack(spacing: 8) {
+                    RcButton(label: "Cancel", primary: false, action: onCancel)
+                    RcButton(label: busy ? "Working..." : confirmLabel, enabled: !busy, identifier: "confirmOk", action: onConfirm)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 420)
+            .background(colors.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
+            .padding(24)
+        }
+        .accessibilityIdentifier("confirmDialog")
+    }
+}
+
+struct PromptDialog: View {
+    let title: String
+    let label: String
+    @Binding var value: String
+    var busy = false
+    var onSubmit: () -> Void
+    var onCancel: () -> Void
+    @Environment(\.rcColors) private var colors
+
+    var body: some View {
+        ZStack {
+            colors.overlay.ignoresSafeArea().onTapGesture(perform: onCancel)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title).font(.system(size: 18, weight: .semibold)).foregroundStyle(colors.fg)
+                RcField(label: label, text: $value, identifier: "dialogField")
+                HStack(spacing: 8) {
+                    RcButton(label: "Cancel", primary: false, action: onCancel)
+                    RcButton(label: busy ? "Saving..." : "Save", enabled: !busy && !value.trimmingCharacters(in: .whitespaces).isEmpty, identifier: "dialogSave", action: onSubmit)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 420)
+            .background(colors.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(colors.border, lineWidth: 1))
+            .padding(24)
+        }
+    }
+}
+
 struct NoticeView: View {
     let text: String
     var tone: Tone = .danger
@@ -331,7 +382,9 @@ struct ProductHeader: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 8)
                     .accessibilityIdentifier("pageTitle")
-                if let trailing { trailing }
+                if let trailing {
+                    trailing
+                }
                 if let onOpenAccount, let accountLabel, !accountLabel.isEmpty {
                     Button(action: onOpenAccount) {
                         Text(String(accountLabel.prefix(2)).uppercased())
@@ -342,25 +395,26 @@ struct ProductHeader: View {
                             .clipShape(Circle())
                             .overlay(Circle().stroke(colors.border, lineWidth: 1))
                     }
-                    .accessibilityIdentifier("accountMenuButton")
                     .accessibilityLabel("Relay account menu for \(accountLabel)")
+                    .accessibilityIdentifier("accountMenuButton")
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(colors.appBg.opacity(0.94))
+            .frame(height: 52)
             Rectangle().fill(colors.border).frame(height: 1)
         }
+        .background(colors.appBg.opacity(0.94))
     }
 
     private func headerIcon(_ system: String, _ label: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(colors.fg)
                 .frame(width: 44, height: 44)
         }
-        .accessibilityIdentifier(label)
         .accessibilityLabel(label)
+        .accessibilityIdentifier(label)
     }
 }
 

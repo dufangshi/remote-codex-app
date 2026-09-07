@@ -1,6 +1,6 @@
 import Foundation
 
-enum AppRoute: Equatable {
+enum AppRoute: Equatable, Hashable {
     case connect
     case home
     case guide
@@ -52,6 +52,10 @@ final class NavController: ObservableObject {
     }
 
     var canSwipeBack: Bool { stack.count > 1 }
+
+    var previous: AppRoute? {
+        stack.count >= 2 ? stack[stack.count - 2] : nil
+    }
 
     func pop() {
         if stack.count > 1 { stack.removeLast() }

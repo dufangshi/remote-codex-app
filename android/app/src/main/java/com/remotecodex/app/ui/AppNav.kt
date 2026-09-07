@@ -26,6 +26,9 @@ class NavController(initial: AppRoute) {
 
     fun canGoBack(): Boolean = stack.size > 1
 
+    val previous: AppRoute?
+        get() = if (stack.size >= 2) stack.elementAt(stack.size - 2) else null
+
     fun push(route: AppRoute) {
         if (stack.lastOrNull() == route) return
         stack.addLast(route)

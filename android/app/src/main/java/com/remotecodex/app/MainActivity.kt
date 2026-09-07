@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,6 +37,7 @@ import com.remotecodex.app.notify.RemoteCodexForeground
 import com.remotecodex.app.theme.RemoteCodexTheme
 import com.remotecodex.app.theme.rcColors
 import com.remotecodex.app.ui.AppRoute
+import com.remotecodex.app.ui.InteractiveStackHost
 import com.remotecodex.app.ui.NavController
 import com.remotecodex.app.ui.screens.AccountMenu
 import com.remotecodex.app.ui.screens.AccountScreen
@@ -86,6 +88,8 @@ class MainActivity : ComponentActivity() {
             var navOpen by remember { mutableStateOf(false) }
             var accountOpen by remember { mutableStateOf(false) }
             var settingsOpen by remember { mutableStateOf(false) }
+            var navigatingForward by remember { mutableStateOf(true) }
+            var popRequest by remember { mutableIntStateOf(0) }
             val scope = rememberCoroutineScope()
             val nav = remember {
                 NavController(route).also { controller ->
@@ -94,6 +98,7 @@ class MainActivity : ComponentActivity() {
             }
 
             fun go(next: AppRoute, replace: Boolean = false) {
+                navigatingForward = true
                 if (replace) nav.replace(next) else nav.push(next)
                 route = nav.current
                 navOpen = false
@@ -101,15 +106,24 @@ class MainActivity : ComponentActivity() {
             }
 
             fun back() {
-                val fallback = nav.backFrom(route)
-                if (nav.pop()) {
-                    route = nav.current
-                } else if (fallback != null) {
-                    nav.reset(fallback)
-                    route = fallback
-                }
                 navOpen = false
                 accountOpen = false
+                val fallback = nav.backFrom(route)
+                if (!nav.canGoBack() && fallback == null) return
+                navigatingForward = false
+                popRequest += 1
+            }
+
+            fun commitPop() {
+                if (nav.pop()) {
+                    route = nav.current
+                } else {
+                    val fallback = nav.backFrom(route)
+                    if (fallback != null) {
+                        nav.reset(fallback)
+                        route = fallback
+                    }
+                }
             }
 
             DisposableEffect(Unit) {
@@ -136,7 +150,15 @@ class MainActivity : ComponentActivity() {
                         .semantics { testTagsAsResourceId = true }
                         .testTag("appRoot"),
                 ) {
-                    when (val current = route) {
+                    InteractiveStackHost(
+                        route = route,
+                        previous = if (nav.canGoBack()) nav.previous else nav.backFrom(route),
+                        canSwipeBack = nav.canGoBack() || nav.backFrom(route) != null,
+                        navigatingForward = navigatingForward,
+                        popRequest = popRequest,
+                        onPopCommitted = { commitPop() },
+                    ) { current ->
+                    when (current) {
                         AppRoute.Connect -> ConnectScreen(store) {
                             nav.reset(AppRoute.Home)
                             route = AppRoute.Home
@@ -255,10 +277,7 @@ class MainActivity : ComponentActivity() {
                             themeMode = themeMode,
                             onLeaveThread = { next ->
                                 when (next) {
-                                    is AppRoute.ThreadDetail -> {
-                                        nav.replace(next)
-                                        route = next
-                                    }
+                                    is AppRoute.ThreadDetail -> go(next, replace = true)
                                     else -> {
                                         nav.pop()
                                         go(next)
@@ -267,6 +286,7 @@ class MainActivity : ComponentActivity() {
                             },
                         )
                         AppRoute.Account -> AccountScreen(api = api, onBack = { back() })
+                    }
                     }
 
                     if (navOpen) {

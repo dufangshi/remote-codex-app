@@ -236,6 +236,7 @@ private fun loadThreadPage(
     }
     val cookie = relaySessionCookie(origin, store.token)
     if (cookie != null) {
+        manager.setCookie(origin, cookie)
         manager.setCookie("$origin/", cookie) { _ ->
             manager.flush()
             start()
@@ -279,19 +280,89 @@ private fun sessionScript(store: SessionStore, deviceId: String, themeMode: Them
         ThemeMode.Dark -> "dark"
         ThemeMode.System -> "system"
     }
+    val secure = if (store.relayUrl.startsWith("https", ignoreCase = true)) "; Secure" else ""
     return """
         (function () {
           window.__REMOTE_CODEX_BOOTSTRAP__ = Object.assign(
             { mode: 'relay', relayApiBase: '/relay' },
             window.__REMOTE_CODEX_BOOTSTRAP__ || {}
           );
+          if (window.__REMOTE_CODEX_NATIVE_SESSION__) return;
+          window.__REMOTE_CODEX_NATIVE_SESSION__ = true;
+          var token = ${jsString(store.token)};
           try {
-            document.cookie = 'remote_codex_relay_session=' + ${jsString(store.token)} + '; path=/; SameSite=Lax${if (store.relayUrl.startsWith("https", ignoreCase = true)) "; Secure" else ""}';
+            document.cookie = 'remote_codex_relay_session=' + token + '; path=/; SameSite=Lax$secure';
             localStorage.setItem('remote-codex-relay-mode', 'true');
             localStorage.removeItem('remote-codex-relay-token');
             localStorage.setItem('remote-codex-relay-device-id', ${jsString(deviceId)});
             localStorage.setItem('remote-codex-theme-mode', ${jsString(theme)});
             localStorage.setItem('remote-codex-auto-collapse-completed-turns', ${jsString(if (store.autoCollapseCompletedTurns) "true" else "false")});
+          } catch (e) {}
+          try {
+            var origFetch = window.fetch.bind(window);
+            window.fetch = function (input, init) {
+              try {
+                if (token && input instanceof Request) {
+                  if (!input.headers.has('Authorization')) {
+                    var reqHeaders = new Headers(input.headers);
+                    reqHeaders.set('Authorization', 'Bearer ' + token);
+                    return origFetch(new Request(input, { headers: reqHeaders }));
+                  }
+                  return origFetch(input);
+                }
+                var nextHeaders = new Headers((init && init.headers) || {});
+                if (token && !nextHeaders.has('Authorization')) {
+                  nextHeaders.set('Authorization', 'Bearer ' + token);
+                }
+                return origFetch(input, Object.assign({}, init || {}, {
+                  headers: nextHeaders,
+                  credentials: (init && init.credentials) || 'same-origin'
+                }));
+              } catch (err) {
+                return origFetch(input, init);
+              }
+            };
+          } catch (e) {}
+          try {
+            var fake = {
+              postMessage: function () {},
+              scriptURL: (location.origin || '') + '/',
+              state: 'activated',
+              addEventListener: function () {},
+              removeEventListener: function () {},
+              onstatechange: null
+            };
+            var dummyReg = {
+              installing: null, waiting: null, active: fake, scope: (location.origin || '') + '/',
+              update: function () { return Promise.resolve(); },
+              unregister: function () { return Promise.resolve(true); },
+              addEventListener: function () {},
+              removeEventListener: function () {}
+            };
+            var swShim = {
+              controller: fake,
+              ready: Promise.resolve(dummyReg),
+              register: function () { return Promise.resolve(dummyReg); },
+              getRegistration: function () { return Promise.resolve(dummyReg); },
+              getRegistrations: function () { return Promise.resolve([dummyReg]); },
+              addEventListener: function () {},
+              removeEventListener: function () {},
+              startMessages: function () {}
+            };
+            try {
+              Object.defineProperty(navigator, 'serviceWorker', {
+                configurable: true,
+                enumerable: true,
+                value: swShim
+              });
+            } catch (replaceErr) {
+              var sw = navigator.serviceWorker;
+              if (sw) {
+                try { sw.register = function () { return Promise.resolve(dummyReg); }; } catch (e) {}
+                try { Object.defineProperty(sw, 'ready', { configurable: true, get: function () { return Promise.resolve(dummyReg); } }); } catch (e) {}
+                try { Object.defineProperty(sw, 'controller', { configurable: true, get: function () { return fake; } }); } catch (e) {}
+              }
+            }
           } catch (e) {}
         })();
     """.trimIndent()

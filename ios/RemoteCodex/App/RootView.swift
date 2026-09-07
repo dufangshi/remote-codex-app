@@ -11,6 +11,8 @@ struct RootView: View {
     @State private var accountOpen = false
     @State private var settingsOpen = false
     @State private var agentBanner: (deviceId: String, threadId: String, title: String, body: String)?
+    @State private var dragOffset: CGFloat = 0
+    @State private var popping = false
 
     private var colors: RcColors {
         switch store.themeMode {
@@ -23,7 +25,34 @@ struct RootView: View {
     var body: some View {
         ZStack {
             colors.appBg.ignoresSafeArea()
-            screen
+            GeometryReader { geo in
+                let width = max(geo.size.width, 1)
+                let progress = min(1, max(0, dragOffset / width))
+                ZStack {
+                    if let previous = behindRoute, dragOffset > 0.5 {
+                        routeView(previous)
+                            .offset(x: -width * 0.3 * (1 - progress))
+                            .scaleEffect(0.96 + 0.04 * progress, anchor: .leading)
+                            .overlay(Color.black.opacity(0.28 * (1 - progress)))
+                            .allowsHitTesting(false)
+                    }
+                    routeView(nav.current)
+                        .offset(x: dragOffset)
+                        .shadow(color: Color.black.opacity(dragOffset > 0 ? 0.28 : 0), radius: 24, x: -10, y: 0)
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
+                ScreenEdgeBackSwipe(enabled: canLeave && !popping) { translation in
+                    var t = Transaction()
+                    t.disablesAnimations = true
+                    withTransaction(t) {
+                        dragOffset = min(width, max(0, translation))
+                    }
+                } onEnded: { translation, velocity in
+                    finishInteractivePop(width: width, translation: translation, velocity: velocity)
+                }
+                .allowsHitTesting(false)
+            }
             if let banner = agentBanner {
                 VStack {
                     Button {
@@ -48,10 +77,6 @@ struct RootView: View {
             if navOpen { navMenu }
             if accountOpen { accountMenu }
             if settingsOpen { settingsSheet }
-            ScreenEdgeBackSwipe(enabled: nav.canSwipeBack) {
-                nav.back()
-            }
-            .allowsHitTesting(false)
         }
         .environment(\.rcColors, colors)
         .preferredColorScheme(store.themeMode == .system ? nil : (store.themeMode == .dark ? .dark : .light))
@@ -86,56 +111,130 @@ struct RootView: View {
         }
     }
 
+    private var canLeave: Bool {
+        nav.canSwipeBack || nav.fallback(from: nav.current) != nil
+    }
+
+    private var behindRoute: AppRoute? {
+        nav.previous ?? nav.fallback(from: nav.current)
+    }
+
+    private func animatedPush(_ route: AppRoute) {
+        let width = UIScreen.main.bounds.width
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            nav.push(route)
+            dragOffset = width
+        }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.92)) {
+            dragOffset = 0
+        }
+    }
+
+    private func animatedReplace(_ route: AppRoute) {
+        let width = UIScreen.main.bounds.width
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            nav.replace(route)
+            dragOffset = width
+        }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.92)) {
+            dragOffset = 0
+        }
+    }
+
+    private func animatedBack() {
+        guard canLeave, !popping else { return }
+        let width = UIScreen.main.bounds.width
+        popping = true
+        withAnimation(.interpolatingSpring(stiffness: 260, damping: 32, initialVelocity: 0)) {
+            dragOffset = width
+        } completion: {
+            completePop()
+        }
+    }
+
+    private func finishInteractivePop(width: CGFloat, translation: CGFloat, velocity: CGFloat) {
+        let shouldPop = translation > width * 0.28 || velocity > 700
+        if shouldPop {
+            popping = true
+            let remaining = max(width - translation, 1)
+            let initial = min(6, max(0, velocity / remaining))
+            withAnimation(.interpolatingSpring(stiffness: 280, damping: 34, initialVelocity: initial)) {
+                dragOffset = width
+            } completion: {
+                completePop()
+            }
+        } else {
+            let distance = max(translation, 1)
+            let initial = min(4, max(-4, -velocity / distance))
+            withAnimation(.interpolatingSpring(stiffness: 320, damping: 36, initialVelocity: initial)) {
+                dragOffset = 0
+            }
+        }
+    }
+
+    private func completePop() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            nav.back()
+            dragOffset = 0
+            popping = false
+        }
+    }
+
     @ViewBuilder
-    private var screen: some View {
-        switch nav.current {
+    private func routeView(_ route: AppRoute) -> some View {
+        Group {
+            switch route {
         case .connect:
             ConnectScreen(store: store) { nav.reset(.home) }
         case .home:
-            HomeScreen(store: store, api: api, session: $session, onSignIn: { nav.push(.portal) }, onDevices: { nav.push(.devices) }, onGuide: { nav.push(.guide) }, onChangeRelay: {
+            HomeScreen(store: store, api: api, session: $session, onSignIn: { animatedPush(.portal) }, onDevices: { animatedPush(.devices) }, onGuide: { animatedPush(.guide) }, onChangeRelay: {
                 store.clearSession()
                 EventWatcher.shared.stop()
                 nav.reset(.connect)
             })
         case .guide:
-            GuideScreen { nav.back() }
+            GuideScreen { animatedBack() }
         case .portal:
-            PortalScreen(store: store, api: api, onBack: { nav.back() }, onGuide: { nav.push(.guide) }, onAuthenticated: {
+            PortalScreen(store: store, api: api, onBack: { animatedBack() }, onGuide: { animatedPush(.guide) }, onAuthenticated: {
                 Task { session = try? await api.fetchSession() }
                 nav.reset(.devices)
                 EventWatcher.shared.requestPermission()
                 EventWatcher.shared.start()
             })
         case .devices:
-            DevicesScreen(store: store, api: api, session: session, onBack: { nav.back() }, onOpenNav: { navOpen = true }, onOpenAccount: { accountOpen = true }, onConnect: { device in
+            DevicesScreen(store: store, api: api, session: session, onBack: { animatedBack() }, onOpenNav: { navOpen = true }, onOpenAccount: { accountOpen = true }, onConnect: { device in
                 store.deviceId = device.id
                 EventWatcher.shared.refresh()
-                nav.push(.workspaces(deviceId: device.id))
+                animatedPush(.workspaces(deviceId: device.id))
             }, onOpenThread: { deviceId, threadId, workspaceId in
                 store.deviceId = deviceId
                 EventWatcher.shared.refresh()
-                nav.push(.threadDetail(deviceId: deviceId, threadId: threadId, workspaceId: workspaceId))
+                animatedPush(.threadDetail(deviceId: deviceId, threadId: threadId, workspaceId: workspaceId))
             }, onOpenDevice: { deviceId in
                 store.deviceId = deviceId
                 EventWatcher.shared.refresh()
-                nav.push(.workspaces(deviceId: deviceId))
+                animatedPush(.workspaces(deviceId: deviceId))
             })
         case .workspaces(let deviceId):
-            WorkspacesScreen(api: api, deviceId: deviceId, session: session, onBack: { nav.back() }, onOpenNav: { navOpen = true }, onOpenAccount: { accountOpen = true }, onOpen: { nav.push(.threads(deviceId: deviceId, workspaceId: $0.id)) }, onNew: { nav.push(.workspaceNew(deviceId: deviceId)) }, onImport: { nav.push(.threadImport(deviceId: deviceId)) }, onOpenThread: { openThread(deviceId: deviceId, threadId: $0) })
+            WorkspacesScreen(api: api, deviceId: deviceId, session: session, onBack: { animatedBack() }, onOpenNav: { navOpen = true }, onOpenAccount: { accountOpen = true }, onOpen: { animatedPush(.threads(deviceId: deviceId, workspaceId: $0.id)) }, onNew: { animatedPush(.workspaceNew(deviceId: deviceId)) }, onImport: { animatedPush(.threadImport(deviceId: deviceId)) }, onOpenThread: { openThread(deviceId: deviceId, threadId: $0) })
         case .workspaceNew(let deviceId):
-            WorkspaceNewScreen(api: api, deviceId: deviceId, onBack: { nav.back() }, onCreated: { workspace in
-                nav.pop()
-                nav.push(.threads(deviceId: deviceId, workspaceId: workspace.id))
+            WorkspaceNewScreen(api: api, deviceId: deviceId, onBack: { animatedBack() }, onCreated: { workspace in
+                animatedReplace(.threads(deviceId: deviceId, workspaceId: workspace.id))
             })
         case .threads(let deviceId, let workspaceId):
-            ThreadsScreen(api: api, deviceId: deviceId, workspaceId: workspaceId, session: session, onBack: { nav.back() }, onOpenNav: { navOpen = true }, onOpenAccount: { accountOpen = true }, onOpen: { nav.push(.threadDetail(deviceId: deviceId, threadId: $0.id, workspaceId: workspaceId)) }, onNew: { nav.push(.threadNew(deviceId: deviceId, workspaceId: workspaceId)) })
+            ThreadsScreen(api: api, deviceId: deviceId, workspaceId: workspaceId, session: session, onBack: { animatedBack() }, onOpenNav: { navOpen = true }, onOpenAccount: { accountOpen = true }, onOpen: { animatedPush(.threadDetail(deviceId: deviceId, threadId: $0.id, workspaceId: workspaceId)) }, onNew: { animatedPush(.threadNew(deviceId: deviceId, workspaceId: workspaceId)) })
         case .threadNew(let deviceId, let workspaceId):
-            ThreadNewScreen(api: api, deviceId: deviceId, workspaceId: workspaceId, onBack: { nav.back() }, onCreated: { thread in
-                nav.pop()
-                nav.push(.threadDetail(deviceId: deviceId, threadId: thread.id, workspaceId: thread.workspaceId ?? workspaceId))
+            ThreadNewScreen(api: api, deviceId: deviceId, workspaceId: workspaceId, onBack: { animatedBack() }, onCreated: { thread in
+                animatedReplace(.threadDetail(deviceId: deviceId, threadId: thread.id, workspaceId: thread.workspaceId ?? workspaceId))
             })
         case .threadImport(let deviceId):
-            ImportScreen(api: api, deviceId: deviceId, onBack: { nav.back() }, onImported: { nav.push(.threadDetail(deviceId: deviceId, threadId: $0, workspaceId: nil)) })
+            ImportScreen(api: api, deviceId: deviceId, onBack: { animatedBack() }, onImported: { animatedPush(.threadDetail(deviceId: deviceId, threadId: $0, workspaceId: nil)) })
         case .threadDetail(let deviceId, let threadId, _):
             ThreadScreen(
                 store: store,
@@ -143,21 +242,24 @@ struct RootView: View {
                 threadId: threadId,
                 themeMode: store.themeMode,
                 sessionName: session?.user?.username,
-                onBack: { nav.back() },
+                onBack: { animatedBack() },
                 onOpenNav: { navOpen = true },
                 onOpenAccount: { accountOpen = true },
                 onLeave: { next in
                     if case .threadDetail = next {
-                        nav.replace(next)
+                        animatedReplace(next)
                     } else {
                         nav.pop()
-                        nav.push(next)
+                        animatedPush(next)
                     }
                 }
             )
         case .account:
-            AccountScreen(api: api, onBack: { nav.back() })
+            AccountScreen(api: api, onBack: { animatedBack() })
         }
+        }
+        .id(route)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var navMenu: some View {
@@ -173,7 +275,7 @@ struct RootView: View {
                     if case .devices = nav.current { return true }
                     return false
                 }()) {
-                    nav.push(.devices)
+                    animatedPush(.devices)
                     navOpen = false
                 }
                 menuRow("Settings", selected: false) {
@@ -201,7 +303,7 @@ struct RootView: View {
                     Text(session?.user?.username ?? "").font(.system(size: 14, weight: .medium)).foregroundStyle(colors.fg)
                     Text(session?.user?.email ?? "").font(.system(size: 12)).foregroundStyle(colors.fgMuted)
                 }.padding(12)
-                menuRow("Account settings", selected: false) { accountOpen = false; nav.push(.account) }
+                menuRow("Account settings", selected: false) { accountOpen = false; animatedPush(.account) }
                 menuRow("Log out", selected: false) {
                     accountOpen = false
                     Task {
@@ -280,7 +382,7 @@ struct RootView: View {
         guard !threadId.isEmpty else { return }
         store.deviceId = deviceId
         agentBanner = nil
-        nav.push(.threadDetail(deviceId: deviceId, threadId: threadId, workspaceId: nil))
+        animatedPush(.threadDetail(deviceId: deviceId, threadId: threadId, workspaceId: nil))
     }
 
     private func menuRow(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
