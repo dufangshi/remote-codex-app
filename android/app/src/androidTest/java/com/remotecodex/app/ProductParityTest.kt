@@ -58,7 +58,20 @@ class ProductParityTest {
                     if (runCatching(check).getOrDefault(false)) return
                     Thread.sleep(200)
                 }
+                device.takeScreenshot(java.io.File(context.getExternalFilesDir(null), "parity-failure.png"))
                 fail(message + " | " + js("JSON.stringify({url:location.href,bridge:!!window.remoteCodexNative,body:document.body?.innerText?.slice(0,1500)})"))
+            }
+            fun tap(element: String) {
+                val rect = org.json.JSONObject(js("(() => { const r=($element).getBoundingClientRect(); return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,width:innerWidth}); })()"))
+                var x = 0; var y = 0
+                scenario.onActivity { activity ->
+                    val view = find(activity.window.decorView)!!
+                    val location = IntArray(2); view.getLocationOnScreen(location)
+                    val scale = view.width / rect.getDouble("width")
+                    x = location[0] + (rect.getDouble("x") * scale).toInt()
+                    y = location[1] + (rect.getDouble("y") * scale).toInt()
+                }
+                device.click(x, y)
             }
             eventually("native bridge and authenticated page") { js("!!window.remoteCodexNative && !!document.body.innerText") == "true" }
             // Initialize the durable watcher before finishing a real fake-harness turn.
@@ -77,9 +90,26 @@ class ProductParityTest {
             assertEquals("mobile rail absent", "0", js("document.querySelectorAll('.matter-rail').length"))
             assertEquals("tools collapsed by default", "0", js("document.querySelectorAll('.matter-breadcrumb').length"))
             assertEquals("real Service Worker controls encrypted files", "true", js("!!navigator.serviceWorker.controller"))
+            assertEquals("thread fills the measured viewport", "true", js("document.querySelector('.thread-ui-shell').getBoundingClientRect().height > innerHeight * .9"))
             js("document.querySelector('[aria-label=\"Thread tools\"]').click()")
             eventually("thread tools expand") { js("!!document.querySelector('.matter-breadcrumb')") == "true" }
             assertEquals("file attachments available", "true", js("!!document.querySelector('input[type=file]')"))
+            tap("document.querySelector('[aria-label=\"Add attachment\"]')")
+            eventually("attachment menu opens") { js("Array.from(document.querySelectorAll('button')).some(b => b.textContent.trim() === 'File')") == "true" }
+            tap("Array.from(document.querySelectorAll('.thread-composer-menu-surface button')).find(b => b.textContent.trim() === 'File')")
+            assertTrue("native attachment picker opens", device.wait(Until.hasObject(By.pkg(java.util.regex.Pattern.compile(".*documentsui"))), 10_000))
+            device.pressBack()
+            eventually("returns to encrypted thread after cancelling picker") { js("location.pathname") == "/devices/${env.deviceId}/threads/${created.id}" }
+            js("document.querySelector('[aria-label=\"Download transcript\"]').click()")
+            eventually("export dialog ready") { js("Array.from(document.querySelectorAll('button')).some(b => b.textContent.trim() === 'Export HTML' && !b.disabled)") == "true" }
+            js("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Export HTML').click()")
+            val exported = device.wait(Until.hasObject(By.pkg(java.util.regex.Pattern.compile(".*documentsui"))), 15_000)
+            if (!exported) println("Export state: " + js("document.body.innerText"))
+            assertTrue("HTML export opens native save picker", exported)
+            device.pressBack()
+            js("navigator.share({title:'Remote Codex',text:'Share a thread',url:location.href})")
+            assertTrue("native share sheet opens", device.wait(Until.hasObject(By.pkg(java.util.regex.Pattern.compile("com.android.intentresolver|android"))), 10_000))
+            device.pressBack()
             // A warm notification/deep-link must replace the page, not only its native route.
             val other = env.startThreadAndPrompt()
             context.startActivity(Intent(context, MainActivity::class.java).apply {
@@ -87,6 +117,11 @@ class ProductParityTest {
                 putExtra("deviceId", env.deviceId); putExtra("threadId", other.id)
             })
             eventually("warm link updates page") { js("location.pathname") == "/devices/${env.deviceId}/threads/${other.id}" }
+            scenario.recreate()
+            eventually("notification route survives activity recreation") { js("location.pathname") == "/devices/${env.deviceId}/threads/${other.id}" }
+            eventually("recreated thread is visibly rendered") { js("document.querySelector('.thread-ui-shell')?.getBoundingClientRect().height > innerHeight * .9") == "true" }
+            eventually("recreated encrypted conversation loads") { js("!!document.querySelector('[role=textbox][aria-label=Prompt]') && document.body.innerText.includes('hello')") == "true" }
+            device.executeShellCommand("screencap -p /sdcard/Download/remote-codex-parity.png")
         }
     }
 }

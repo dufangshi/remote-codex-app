@@ -36,7 +36,7 @@ Back navigation matches the web product header:
 
 ## Login
 
-The first native-only step is the relay URL. After that, session, register, and password sign-in match the web portal. OAuth buttons open the same relay start URLs when the relay advertises them.
+The first native-only step is the relay URL. After that, session, register, and password sign-in match the web portal. External OAuth is not yet supported end to end: provider pages open in the system browser, whose login cookies are separate from the app's WebView. Use password sign-in in this preview. A secure browser-to-app session handoff is still required before claiming OAuth parity. Passkey sign-in has not been validated in these native shells.
 
 ## Notifications
 
@@ -73,6 +73,6 @@ export DEVELOPER_DIR="/Applications/Xcode-beta.app/Contents/Developer"
 
 The backend helper starts an isolated relay + fake-runtime supervisor and writes `.local/e2e-env.json`. It clears inherited Supervisor environment variables and uses fresh temporary data directories. `serve` keeps it in the foreground for agent/terminal runners; `start`/`stop` are for scripts that retain the child processes.
 
-Android's `ProductParityTest` receives and taps a real system completion notification, verifies the encrypted thread, shared mobile layout, real Service Worker, attachment picker, HTML save/share and warm thread links. The focused iOS workflow runs the matching XCTest on a macOS simulator. Simulator notification checks do not verify delivery through Apple's production APNs network; that final check needs the app's signing credentials and a physical device.
+Android's `ProductParityTest` receives and taps a real system completion notification, verifies the encrypted thread, shared mobile layout, real Service Worker, attachment picker, HTML save/share, warm thread links and activity recreation. This flow passed on Android 14 with WebView 113. The focused iOS workflow passed on an iOS 18.5 simulator, including a real local system completion banner and navigation to the exact encrypted thread. These tests bootstrap a fixture session; they do not claim to validate all login methods. Simulator notification checks do not verify delivery through Apple's production APNs network; that final check needs the app's signing credentials and a physical device.
 
 `node --test tests/native-bridge.test.mjs` checks the native bridge without replacing fetch, authentication or Service Workers.

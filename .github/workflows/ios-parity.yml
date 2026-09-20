@@ -2,6 +2,12 @@ name: iOS shared UI and notification E2E
 on:
   push:
     branches: [fix/web-parity-notifications]
+    paths:
+      - 'ios/**'
+      - 'web/**'
+      - 'scripts/e2e-ios.sh'
+      - 'scripts/e2e-backend.sh'
+      - '.github/workflows/ios-parity.yml'
   workflow_dispatch:
 permissions:
   contents: read
