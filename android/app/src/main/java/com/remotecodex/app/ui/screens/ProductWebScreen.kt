@@ -11,21 +11,26 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.graphics.toArgb
+import androidx.core.view.doOnLayout
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.remotecodex.app.data.SessionStore
 import com.remotecodex.app.notify.*
 import com.remotecodex.app.theme.ThemeMode
+import com.remotecodex.app.theme.rcColors
 import org.json.JSONObject
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun ProductWebScreen(store: SessionStore, target: String, onChangeRelay: () -> Unit, onTheme: (ThemeMode) -> Unit) {
     val context = LocalContext.current
+    val colors = rcColors
     val origin = store.relayUrl.trimEnd('/')
     var web by remember { mutableStateOf<WebView?>(null) }
     var initialized by remember { mutableStateOf(false) }
@@ -67,10 +72,11 @@ fun ProductWebScreen(store: SessionStore, target: String, onChangeRelay: () -> U
         }
     }
     AndroidView(
-        modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
+        modifier = Modifier.fillMaxSize().background(colors.appBg).statusBarsPadding().navigationBarsPadding().imePadding(),
         factory = {
             WebView(context).apply {
                 web = this
+                setBackgroundColor(colors.appBg.toArgb())
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.useWideViewPort = true
@@ -158,7 +164,7 @@ fun ProductWebScreen(store: SessionStore, target: String, onChangeRelay: () -> U
                 }
                 setDownloadListener { url, _, _, _, _ -> external(Uri.parse(url)) }
                 val cookie = if (store.token.isNotEmpty()) "remote_codex_relay_session=${store.token}; Path=/; HttpOnly; SameSite=Lax${if (origin.startsWith("https:")) "; Secure" else ""}" else null
-                fun start() { loadUrl(origin + latestTarget); initialized = true }
+                fun start() { doOnLayout { loadUrl(origin + latestTarget); initialized = true } }
                 if (cookie != null) CookieManager.getInstance().setCookie(origin, cookie) { start() }
                 else start()
             }

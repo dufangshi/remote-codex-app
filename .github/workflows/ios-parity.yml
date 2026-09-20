@@ -5,6 +5,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  HOMEBREW_NO_AUTO_UPDATE: '1'
 concurrency:
   group: ios-parity-${{ github.ref }}
   cancel-in-progress: true

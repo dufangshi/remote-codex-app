@@ -53,7 +53,7 @@ final class RemoteCodexUITests: XCTestCase {
         waitForExpectations(timeout: 30)
         let prompt = app.textViews["Prompt"]
         XCTAssertTrue(prompt.waitForExistence(timeout: 30), app.debugDescription)
-        XCTAssertEqual(app.buttons["Thread tools"].count, 1, "No duplicate native toolbar")
+        XCTAssertEqual(app.buttons.matching(identifier: "Thread tools").count, 1, "No duplicate native toolbar")
         XCTAssertFalse(app.buttons["Download transcript"].exists, "Tools default collapsed")
         app.buttons["Thread tools"].tap()
         XCTAssertTrue(app.buttons["Download transcript"].waitForExistence(timeout: 5))

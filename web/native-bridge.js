@@ -7,10 +7,22 @@
     if (window.RemoteCodexHost) window.RemoteCodexHost.postMessage(message);
     else window.webkit?.messageHandlers?.remoteCodex?.postMessage(message);
   };
-  const report = () => send('state', {
+  const viewport = () => {
+    if (!document.documentElement || !(window.innerHeight > 0)) return;
+    // Some WebViews retain a zero small-viewport height when the first page
+    // loads before its native view is measured. Use the actual native viewport.
+    document.documentElement.style.setProperty('--remote-codex-native-height', `${window.innerHeight}px`);
+    if (document.head && !document.getElementById('remote-codex-native-viewport')) {
+      const style = document.createElement('style');
+      style.id = 'remote-codex-native-viewport';
+      style.textContent = 'html .thread-ui-shell.thread-ui-viewport-constrained { height: var(--remote-codex-native-height); max-height: var(--remote-codex-native-height); }';
+      document.head.append(style);
+    }
+  };
+  const report = () => { viewport(); send('state', {
     path: location.pathname + location.search + location.hash,
     theme: localStorage.getItem('remote-codex-theme-mode') || 'system',
-  });
+  }); };
   for (const name of ['pushState', 'replaceState']) {
     const original = history[name];
     history[name] = function (...args) {
@@ -22,6 +34,7 @@
   addEventListener('popstate', report);
   addEventListener('pageshow', report);
   addEventListener('DOMContentLoaded', report);
+  addEventListener('resize', viewport);
   // Fetch remains untouched: credentials, E2EE and real Service Workers belong
   // to the website. Poll state only to synchronize native cookies/theme on login.
   setInterval(report, 2000);
