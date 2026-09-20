@@ -39,7 +39,16 @@ fun ProductWebScreen(store: SessionStore, target: String, onChangeRelay: () -> U
     var chooser by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     var download by remember { mutableStateOf<ByteArray?>(null) }
     val files = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        chooser?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data))
+        val selected = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+        selected?.forEach { uri ->
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+        }
+        chooser?.onReceiveValue(selected)
         chooser = null
     }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -128,7 +137,12 @@ fun ProductWebScreen(store: SessionStore, target: String, onChangeRelay: () -> U
                     override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                         chooser?.onReceiveValue(null)
                         chooser = callback
-                        runCatching { files.launch(params.createIntent()) }.onFailure { callback.onReceiveValue(null); chooser = null }
+                        runCatching {
+                            files.launch(params.createIntent().apply {
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                            })
+                        }.onFailure { callback.onReceiveValue(null); chooser = null }
                         return true
                     }
                     override fun onCreateWindow(view: WebView, dialog: Boolean, gesture: Boolean, message: android.os.Message): Boolean {
@@ -153,6 +167,10 @@ fun ProductWebScreen(store: SessionStore, target: String, onChangeRelay: () -> U
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         if (!request.isForMainFrame) return false
                         val url = request.url
+                        if (sameOrigin(origin, url) && url.encodedPath == "/__native/close") {
+                            if (view.canGoBack()) view.goBack() else view.loadUrl(origin + "/")
+                            return true
+                        }
                         if (sameOrigin(origin, url)) return false
                         external(url)
                         return true

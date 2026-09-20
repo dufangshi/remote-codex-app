@@ -19,10 +19,26 @@
       document.head.append(style);
     }
   };
+  // Mobile scrolling stays available, but native WebViews should not paint
+  // platform scrollbars over the compact product chrome. Horizontal tab rows
+  // must also stay single-axis so a vertical scrollbar cannot appear there.
+  const hideScrollbars = () => {
+    if (!document.head || document.getElementById('remote-codex-mobile-scrollbars')) return;
+    const style = document.createElement('style');
+    style.id = 'remote-codex-mobile-scrollbars';
+    style.textContent = `
+      *, *::before, *::after { scrollbar-width: none !important; }
+      *::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+      .overflow-x-auto, .overflow-x-scroll { overflow-y: hidden !important; }
+    `;
+    document.head.append(style);
+  };
   const report = () => { viewport(); send('state', {
     path: location.pathname + location.search + location.hash,
     theme: localStorage.getItem('remote-codex-theme-mode') || 'system',
   }); };
+  hideScrollbars();
+  addEventListener('DOMContentLoaded', hideScrollbars);
   for (const name of ['pushState', 'replaceState']) {
     const original = history[name];
     history[name] = function (...args) {
