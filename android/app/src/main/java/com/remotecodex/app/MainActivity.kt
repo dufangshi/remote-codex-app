@@ -10,6 +10,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.core.view.WindowCompat
 import com.remotecodex.app.data.SessionStore
 import com.remotecodex.app.notify.*
 import com.remotecodex.app.theme.RemoteCodexTheme
@@ -37,6 +39,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             var connected by remember { mutableStateOf(store.hasRelayUrl) }
             var theme by remember { mutableStateOf(store.themeMode) }
+            val dark = theme == com.remotecodex.app.theme.ThemeMode.Dark || (theme == com.remotecodex.app.theme.ThemeMode.System && isSystemInDarkTheme())
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
             RemoteCodexTheme(theme) {
                 if (!connected) ConnectScreen(store) { connected = true; target = "/" }
                 else key(store.relayUrl) {
@@ -44,6 +53,7 @@ class MainActivity : ComponentActivity() {
                         AgentEventService.stop(this)
                         CookieManager.getInstance().removeAllCookies(null)
                         store.clearSession()
+                        store.relayUrl = ""
                         connected = false
                     }, onTheme = { theme = it })
                 }

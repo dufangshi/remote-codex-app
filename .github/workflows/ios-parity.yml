@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: dufangshi/remote-codex-thread-ui-rust
-          ref: 9745e4dfa8850ee02b5343ce68d41e29e1c22aad
+          ref: 8045c80f8cb36a585313edc83995caf152599139
           path: control-plane/remote-codex-thread-ui
       - uses: pnpm/action-setup@v4
         with:

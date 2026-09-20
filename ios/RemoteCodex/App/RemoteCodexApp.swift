@@ -88,6 +88,10 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        let info = notification.request.content.userInfo
+        let open = EventWatcher.shared.openThread
+        if EventWatcher.shared.isForeground, info["deviceId"] as? String == open?.deviceId,
+           info["threadId"] as? String == open?.threadId { return [] }
         return [.banner, .sound, .list]
     }
 

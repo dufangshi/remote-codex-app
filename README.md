@@ -2,7 +2,7 @@
 
 Independent Android and iOS clients for [Remote Codex](https://github.com/dufangshi/remoteCodex) relay mode.
 
-The outer shell is native and follows the public web UI: the same screen stack, back targets, copy, and visual language. Thread conversation UI is the live relay web thread page inside a WebView.
+Both clients render the live relay product in a WebView, so devices, workspaces, workspace tabs, shortcuts, recent chats, thread search, Explorer, settings and the composer stay aligned with the website. Native code owns relay selection, safe areas/keyboard layout, attachment picking, saving/sharing exports and system notifications. There is no second native thread toolbar.
 
 ## Download
 
@@ -40,7 +40,14 @@ The first native-only step is the relay URL. After that, session, register, and 
 
 ## Notifications
 
-While signed in, the app keeps a WebSocket to each selected (or last connected) device. When `thread.turn.completed` or `thread.turn.failed` arrives and that thread is not already open in the foreground, a local notification is posted. Tapping it opens `/devices/:deviceId/threads/:threadId`.
+While signed in, the app reads the relay's durable account completion feed. It no longer depends on plaintext device WebSockets, which cannot monitor encrypted devices reliably. Per-session cursors survive reconnects, deduplicate notifications and suppress the currently open foreground thread. Taps open the exact device/thread; a notification from a different relay is ignored.
+
+- Android polls every 4 seconds in a visible foreground monitoring service. Permission denial, force-stop and Android's background/dataSync time limits can prevent delivery. Reopening the app restarts monitoring. This is not FCM, and it does not promise delivery after the OS stops the service.
+- iOS uses APNs when the relay and signed app are configured. Without APNs, the foreground watcher and best-effort background refresh cannot guarantee delivery while suspended. The shared notification settings explicitly report when APNs is unavailable.
+
+For iOS production pushes, configure `REMOTE_CODEX_APNS_KEY_PATH` (a protected `.p8` file), `REMOTE_CODEX_APNS_KEY_ID`, `REMOTE_CODEX_APNS_TEAM_ID`, and `REMOTE_CODEX_APNS_TOPIC` (the signed bundle identifier) on the relay. Enable Push Notifications for the app's signing profile. Debug uses Apple's sandbox, Release uses production. Tokens register through the authenticated `/relay/account/notifications/native` endpoint and deliveries are revoked with the account session. Push payloads contain routing identifiers and generic completion copy, not decrypted prompts or responses.
+
+iOS uses real Service Workers through `WKAppBoundDomains`. This build allows `remote.lnz-study.com`, `localhost` and `127.0.0.1`. For another relay, add its host to `ios/project.yml` and regenerate the project. Native file exports currently have a 32 MB limit and show an error above it.
 
 ## Requirements
 
@@ -64,4 +71,8 @@ export DEVELOPER_DIR="/Applications/Xcode-beta.app/Contents/Developer"
 ./scripts/e2e-backend.sh stop
 ```
 
-The backend helper starts a local relay + fake-runtime supervisor, writes `.local/e2e-env.json`, and the device tests drive login → devices → workspaces → thread → agent-complete notification → open thread.
+The backend helper starts an isolated relay + fake-runtime supervisor and writes `.local/e2e-env.json`. It clears inherited Supervisor environment variables and uses fresh temporary data directories. `serve` keeps it in the foreground for agent/terminal runners; `start`/`stop` are for scripts that retain the child processes.
+
+Android's `ProductParityTest` receives and taps a real system completion notification, verifies the encrypted thread, shared mobile layout, real Service Worker, attachment picker, HTML save/share and warm thread links. The focused iOS workflow runs the matching XCTest on a macOS simulator. Simulator notification checks do not verify delivery through Apple's production APNs network; that final check needs the app's signing credentials and a physical device.
+
+`node --test tests/native-bridge.test.mjs` checks the native bridge without replacing fetch, authentication or Service Workers.

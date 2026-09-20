@@ -29,6 +29,7 @@ final class ProductWebController: UIViewController, WKNavigationDelegate, WKUIDe
     private var web: WKWebView!
     private var target = ""
     private var bootstrapped = false
+    private var sessionReady = false
     init(store: SessionStore) { self.store = store; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     override func viewDidLoad() {
@@ -63,13 +64,19 @@ final class ProductWebController: UIViewController, WKNavigationDelegate, WKUIDe
         guard target != path else { return }
         target = path
         guard let url = URL(string: store.relayUrl + path) else { return }
-        if !bootstrapped, !store.token.isEmpty, let host = url.host, let cookie = HTTPCookie(properties: [
-            .name: "remote_codex_relay_session", .value: store.token, .domain: host,
-            .path: "/", .secure: url.scheme == "https" ? "TRUE" : "FALSE",
-        ]) {
+        var cookieProperties: [HTTPCookiePropertyKey: Any] = [
+            .name: "remote_codex_relay_session", .value: store.token, .domain: url.host ?? "",
+            .path: "/", .originURL: url,
+        ]
+        if url.scheme == "https" { cookieProperties[.secure] = "TRUE" }
+        if !bootstrapped, !store.token.isEmpty, let cookie = HTTPCookie(properties: cookieProperties) {
             bootstrapped = true
-            web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { [weak self] in self?.web.load(URLRequest(url: url)) }
-        } else { bootstrapped = true; web.load(URLRequest(url: url)) }
+            web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { [weak self] in
+                guard let self else { return }
+                self.sessionReady = true
+                self.web.load(URLRequest(url: url))
+            }
+        } else { bootstrapped = true; sessionReady = true; web.load(URLRequest(url: url)) }
     }
     func close() {
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "remoteCodex")
@@ -77,6 +84,7 @@ final class ProductWebController: UIViewController, WKNavigationDelegate, WKUIDe
         EventWatcher.shared.openThread = nil
     }
     func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+        guard sessionReady else { return }
         cookieStore.getAllCookies { [weak self] cookies in
             guard let self, let host = URL(string: self.store.relayUrl)?.host else { return }
             let token = cookies.first { $0.name == "remote_codex_relay_session" && $0.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")) == host }?.value ?? ""

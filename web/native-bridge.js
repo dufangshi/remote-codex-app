@@ -35,10 +35,26 @@
   addEventListener('pageshow', report);
   addEventListener('DOMContentLoaded', report);
   addEventListener('resize', viewport);
+  const observeTheme = () => {
+    if (typeof MutationObserver !== 'undefined' && document.documentElement) {
+      new MutationObserver(report).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme-mode', 'data-theme-effective'] });
+    }
+  };
+  if (document.documentElement) observeTheme();
+  else addEventListener('DOMContentLoaded', observeTheme);
   // Fetch remains untouched: credentials, E2EE and real Service Workers belong
   // to the website. Poll state only to synchronize native cookies/theme on login.
   setInterval(report, 2000);
   const pending = new Map();
+  // Keep the original Blob until its URL is revoked. Reading our own object
+  // directly avoids a fetch(blob:) that older WebViews reject under connect-src self.
+  const blobs = new Map();
+  if (window.URL?.createObjectURL) {
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = blob => { const url = create(blob); blobs.set(url, blob); return url; };
+    URL.revokeObjectURL = url => { blobs.delete(String(url)); return revoke(url); };
+  }
   let nextId = 0;
   window.remoteCodexNative = {
     platform: window.webkit?.messageHandlers?.remoteCodex ? 'ios' : 'android',
@@ -60,12 +76,17 @@
     navigator.share = share;
     navigator.canShare = data => !data.files;
   }
-  document.addEventListener('click', async event => {
-    const link = event.target.closest?.('a[download]');
-    if (!link || !/^(blob:|data:)/.test(link.href)) return;
-    event.preventDefault();
+  const downloadable = link => link && /^(blob:|data:)/.test(link.href);
+  const download = async link => {
     try {
-      const blob = await (await fetch(link.href)).blob();
+      let blob = blobs.get(link.href);
+      if (!blob && link.href.startsWith('data:')) {
+        const comma = link.href.indexOf(',');
+        const format = link.href.slice(5, comma);
+        const encoded = link.href.slice(comma + 1);
+        blob = new Blob([format.endsWith(';base64') ? Uint8Array.from(atob(encoded), c => c.charCodeAt(0)) : decodeURIComponent(encoded)], { type: format.split(';')[0] });
+      }
+      blob ||= await (await fetch(link.href)).blob();
       if (blob.size > 32 * 1024 * 1024) throw new Error('Download exceeds the 32 MB mobile export limit.');
       const reader = new FileReader();
       reader.onload = () => send('download', {
@@ -73,6 +94,21 @@
       });
       reader.readAsDataURL(blob);
     } catch (error) { send('error', { message: error.message }); }
+  };
+  document.addEventListener('click', event => {
+    const link = event.target.closest?.('a[download]');
+    if (!downloadable(link)) return;
+    event.preventDefault();
+    return download(link);
   }, true);
+  // Recovery-code and other small exports may click a detached anchor, which
+  // never bubbles to document. Preserve ordinary anchor clicks unchanged.
+  if (window.HTMLAnchorElement) {
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      if (!this.isConnected && this.hasAttribute('download') && downloadable(this)) { void download(this); return; }
+      return click.call(this);
+    };
+  }
   report();
 })();
