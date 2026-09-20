@@ -63,6 +63,8 @@ android {
         buildConfig = true
     }
 
+    sourceSets["main"].assets.srcDir("../../web")
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }

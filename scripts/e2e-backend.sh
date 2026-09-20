@@ -37,8 +37,13 @@ start() {
     echo "missing supervisor-web dist at $WEB_DIST" >&2
     exit 1
   fi
-  stop >/dev/null 2>&1 || true
-  rm -rf "$DATA"
+  if [[ -f "$PID_FILE" ]]; then
+    echo 'An E2E backend is already recorded. Stop it before starting another.' >&2
+    exit 1
+  fi
+  DATA="$(mktemp -d "$ROOT/.local/e2e.XXXXXX")"
+  # Never inherit a managed thread's production database, relay or credentials.
+  for name in ${!REMOTE_CODEX_@}; do unset "$name"; done
   mkdir -p "$DATA/workspaces/mobile-ws"
   echo "# mobile e2e workspace" > "$DATA/workspaces/mobile-ws/README.md"
 
@@ -101,7 +106,7 @@ pathlib.Path(data_dir, "provision.json").write_text(json.dumps({
     "deviceId": device_id,
     "deviceToken": device_token,
 }))
-print(json.dumps({"token": token, "deviceId": device_id, "deviceToken": device_token}))
+print("Isolated mobile test device provisioned.")
 PY
   eval "$(python3 - <<PY
 import json
@@ -117,13 +122,18 @@ PY
   env -u REMOTE_CODEX_RELAY_AGENT_TOKEN -u REMOTE_CODEX_RELAY_SERVER_URL \
     HOST=127.0.0.1 PORT="$SUPERVISOR_PORT" \
     REMOTE_CODEX_MODE=relay \
+    REMOTE_CODEX_ADMIN_USERNAME=admin \
+    REMOTE_CODEX_ADMIN_PASSWORD=admin-pass-1 \
     REMOTE_CODEX_E2E_FAKE_RUNTIME=1 \
+    REMOTE_CODEX_SESSION_SECRET=isolated-mobile-e2e-session-secret \
     REMOTE_CODEX_RELAY_SERVER_URL="$RELAY" \
     REMOTE_CODEX_RELAY_AGENT_TOKEN="$DEVICE_TOKEN" \
     REMOTE_CODEX_RELAY_SUPERVISOR_PORT="$SUPERVISOR_PORT" \
     REMOTE_CODEX_RELAY_SUPERVISOR_HOST=127.0.0.1 \
     DATABASE_URL="$DATA/supervisor.sqlite" \
     WORKSPACE_ROOT="$DATA/workspaces" \
+    REMOTE_CODEX_DATABASE_PATH="$DATA/supervisor.sqlite" \
+    REMOTE_CODEX_WORKSPACE_ROOT="$DATA/workspaces" \
     "$BIN" relay-supervisor >"$DATA/supervisor.log" 2>&1 &
   echo $! >> "$PID_FILE"
 
@@ -159,7 +169,7 @@ env = {
     "workspacePath": workspace_path,
 }
 pathlib.Path(env_file).write_text(json.dumps(env, indent=2) + "\n")
-print(json.dumps(env, indent=2))
+print("Isolated mobile test backend ready: " + relay)
 PY
 }
 
@@ -174,6 +184,7 @@ stop() {
 
 case "${1:-start}" in
   start) start ;;
+  serve) trap stop EXIT INT TERM; start; wait ;;
   stop) stop ;;
-  *) echo "usage: $0 start|stop" >&2; exit 1 ;;
+  *) echo "usage: $0 start|serve|stop" >&2; exit 1 ;;
 esac

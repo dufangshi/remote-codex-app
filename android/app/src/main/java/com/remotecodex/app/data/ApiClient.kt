@@ -47,6 +47,8 @@ class ApiClient(
     suspend fun fetchSession(): RelaySession =
         request("/relay/auth/session")
 
+    suspend fun fetchWorkbench(): JsonObject = request("/relay/account/workbench")
+
     suspend fun login(identifier: String, password: String): RelayLoginResult {
         val result: RelayLoginResult = request(
             "/relay/auth/login",

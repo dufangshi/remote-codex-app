@@ -48,6 +48,7 @@ adb reverse tcp:18790 tcp:18790 || true
 
 cd "$ROOT/android"
 ./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.remotecodex.app.ProductParityTest \
   -Pandroid.testInstrumentationRunnerArguments.relayUrl="http://127.0.0.1:${RELAY_PORT}" \
   -Pandroid.testInstrumentationRunnerArguments.hostRelayUrl="http://127.0.0.1:${RELAY_PORT}" \
   -Pandroid.testInstrumentationRunnerArguments.username="$USERNAME" \

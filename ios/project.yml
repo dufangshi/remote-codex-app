@@ -14,12 +14,18 @@ settings:
     CODE_SIGNING_REQUIRED: "NO"
     CODE_SIGN_IDENTITY: ""
     DEVELOPMENT_TEAM: ""
+    APS_ENVIRONMENT: development
+  configs:
+    Release:
+      APS_ENVIRONMENT: production
 targets:
   RemoteCodex:
     type: application
     platform: iOS
     sources:
       - path: RemoteCodex
+      - path: ../web/native-bridge.js
+        buildPhase: resources
     settings:
       base:
         INFOPLIST_FILE: RemoteCodex/Info.plist
@@ -39,6 +45,9 @@ targets:
           NSAllowsArbitraryLoadsInWebContent: true
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: Remote Codex connects to your relay on the local network.
+        NSCameraUsageDescription: Take a photo to attach to your prompt.
+        NSPhotoLibraryUsageDescription: Select images to attach to your prompt.
+        WKAppBoundDomains: [remote.lnz-study.com, localhost, 127.0.0.1]
         UILaunchScreen: {}
         UIBackgroundModes:
           - fetch

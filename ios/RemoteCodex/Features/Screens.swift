@@ -27,6 +27,11 @@ struct ConnectScreen: View {
                 RcButton(label: "Continue", identifier: "continueButton") {
                     let normalized = normalizeRelayUrl(url)
                     if normalized.isEmpty { error = "Enter a relay URL."; return }
+                    let domains = Bundle.main.object(forInfoDictionaryKey: "WKAppBoundDomains") as? [String] ?? []
+                    guard let host = URL(string: normalized)?.host, domains.contains(host) else {
+                        error = "This iOS build supports: \(domains.joined(separator: ", ")). Add your relay domain to WKAppBoundDomains when building a custom client."
+                        return
+                    }
                     store.relayUrl = normalized
                     onContinue()
                 }

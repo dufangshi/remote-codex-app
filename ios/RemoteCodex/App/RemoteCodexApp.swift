@@ -5,20 +5,15 @@ import BackgroundTasks
 
 @main
 struct RemoteCodexApp: App {
+    @UIApplicationDelegateAdaptor(NativeAppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            RootView(store: model.store, nav: model.nav, api: model.api)
+            ProductRootView(model: model, store: model.store)
                 .onOpenURL { url in
                     model.apply(url: url)
-                }
-                .onAppear {
-                    NotificationDelegate.shared.onOpen = { deviceId, threadId in
-                        model.store.deviceId = deviceId
-                        model.nav.push(.threadDetail(deviceId: deviceId, threadId: threadId, workspaceId: nil))
-                    }
                 }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -34,26 +29,33 @@ struct RemoteCodexApp: App {
 }
 
 final class AppModel: ObservableObject {
+    @Published var webTarget = "/"
     let store: SessionStore
     let nav: NavController
     let api: APIClient
 
     init() {
+        #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--uitesting") {
             let defaults = UserDefaults.standard
             defaults.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "com.remotecodex.app")
             HTTPCookieStorage.shared.removeCookies(since: .distantPast)
             URLCache.shared.removeAllCachedResponses()
-            WKWebsiteDataStore.default().removeData(
-                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
-                modifiedSince: .distantPast,
-                completionHandler: {}
-            )
         }
+        #endif
         let store = SessionStore()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--uitesting") {
+            store.relayUrl = ProcessInfo.processInfo.environment["E2E_RELAY_URL"] ?? ""
+            store.token = ProcessInfo.processInfo.environment["E2E_TOKEN"] ?? ""
+        }
+        #endif
         self.store = store
         self.nav = NavController(store.hasRelayUrl ? .home : .connect)
         self.api = APIClient(store: store)
+        NotificationDelegate.shared.onOpen = { [weak self] device, thread in
+            self?.openThread(device, thread)
+        }
         UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
         EventWatcher.shared.registerBackgroundTasks()
         EventWatcher.shared.store = store
@@ -63,30 +65,39 @@ final class AppModel: ObservableObject {
     }
 
     func apply(url: URL) {
-        if let route = nativeRoute(for: url, deviceId: store.deviceId) {
-            if case .threadDetail(let deviceId, _, _) = route {
-                store.deviceId = deviceId
-            }
-            nav.push(route)
+        let parts = url.path.split(separator: "/").map(String.init)
+        if url.scheme == "remotecodex", url.host == "devices", parts.count == 3, parts[1] == "threads" {
+            openThread(parts[0], parts[2])
         }
+    }
+
+    func openThread(_ device: String, _ thread: String) {
+        guard !device.isEmpty, !thread.isEmpty, thread != "new", thread != "import" else { return }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        guard let d = device.addingPercentEncoding(withAllowedCharacters: allowed), let t = thread.addingPercentEncoding(withAllowedCharacters: allowed) else { return }
+        store.deviceId = device
+        webTarget = "/devices/\(d)/threads/\(t)"
     }
 }
 
 final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationDelegate()
-    var onOpen: ((String, String) -> Void)?
+    private var pending: (String, String)?
+    var onOpen: ((String, String) -> Void)? {
+        didSet { if let pending, let onOpen { self.pending = nil; onOpen(pending.0, pending.1) } }
+    }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        if ProcessInfo.processInfo.arguments.contains("--uitesting") {
-            return []
-        }
         return [.banner, .sound, .list]
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         if let deviceId = info["deviceId"] as? String, let threadId = info["threadId"] as? String {
-            await MainActor.run { onOpen?(deviceId, threadId) }
+            await MainActor.run {
+                if let origin = info["relayOrigin"] as? String, origin != EventWatcher.shared.store?.relayUrl { return }
+                if let onOpen { onOpen(deviceId, threadId) } else { pending = (deviceId, threadId) }
+            }
         }
     }
 }

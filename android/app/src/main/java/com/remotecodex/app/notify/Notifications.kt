@@ -15,6 +15,7 @@ object Notifications {
     const val WATCH_ID = 41
     const val EXTRA_DEVICE_ID = "deviceId"
     const val EXTRA_THREAD_ID = "threadId"
+    const val EXTRA_RELAY_ORIGIN = "relayOrigin"
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -52,6 +53,7 @@ object Notifications {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(EXTRA_DEVICE_ID, deviceId)
             putExtra(EXTRA_THREAD_ID, threadId)
+            putExtra(EXTRA_RELAY_ORIGIN, com.remotecodex.app.data.SessionStore(context).relayUrl)
             data = android.net.Uri.parse("remotecodex://devices/$deviceId/threads/$threadId")
         }
         val pending = PendingIntent.getActivity(

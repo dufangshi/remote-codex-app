@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        D0D0D0D0D0D0D0D0D0D0D001 /* native-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = D0D0D0D0D0D0D0D0D0D0D002; };
 		05CCA3E32E28E12558B4249B /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100A28395AD9249007892B6B /* Theme.swift */; };
 		30619D85A639E15267F80C8E /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD620A3F2229D517B02A755E /* SessionStore.swift */; };
 		3A23EBA385C41E209FD38C82 /* RemoteCodexApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B582C49511E8012D3779A31 /* RemoteCodexApp.swift */; };
@@ -34,6 +35,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+        D0D0D0D0D0D0D0D0D0D0D002 /* native-bridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = ../web/native-bridge.js; sourceTree = SOURCE_ROOT; };
 		04FECA0E850860B8AC4CBA61 /* RemoteCodexUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RemoteCodexUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		100A28395AD9249007892B6B /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		15AE2BF1DDBD2E6CCB66D786 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -242,6 +244,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DD103EE72FEF3C4C48FE40BE /* Assets.xcassets in Resources */,
+                D0D0D0D0D0D0D0D0D0D0D001 /* native-bridge.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

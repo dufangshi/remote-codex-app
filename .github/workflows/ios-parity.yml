@@ -1,0 +1,64 @@
+name: iOS shared UI and notification E2E
+on:
+  push:
+    branches: [fix/web-parity-notifications]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ios-parity-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: dufangshi/remoteCodex
+          ref: fa40379d34e3a53d31313295249937292f5d4373
+          path: control-plane
+      - uses: actions/checkout@v4
+        with:
+          repository: dufangshi/remote-codex-thread-ui-rust
+          ref: 9745e4dfa8850ee02b5343ce68d41e29e1c22aad
+          path: control-plane/remote-codex-thread-ui
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the shared web product
+        working-directory: control-plane
+        run: |
+          pnpm --dir remote-codex-thread-ui install --frozen-lockfile
+          pnpm --dir remote-codex-thread-ui --filter @remote-codex/thread-ui build
+          pnpm install --frozen-lockfile
+          pnpm --filter @remote-codex/supervisor-web build
+      - name: Prepare isolated runtime and simulator
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          brew install xcodegen
+          mkdir -p .local/runtime
+          gh release download v0.12.39 --repo dufangshi/remoteCodex --pattern remote-codex-darwin-arm64 --dir .local/runtime
+          chmod +x .local/runtime/remote-codex-darwin-arm64
+          xcrun simctl list devices available
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if "iPhone" in d["name"]))')
+          xcrun simctl boot "$SIMULATOR_ID"
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          echo "IOS_DEST=platform=iOS Simulator,id=$SIMULATOR_ID" >> "$GITHUB_ENV"
+      - name: Receive completion notification and open encrypted thread
+        run: |
+          export REMOTE_CODEX_ROOT="$PWD/control-plane"
+          export REMOTE_CODEX_BIN="$PWD/.local/runtime/remote-codex-darwin-arm64"
+          ./scripts/e2e-backend.sh start
+          trap './scripts/e2e-backend.sh stop' EXIT
+          ./scripts/e2e-ios.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-parity-results
+          path: .local/*.xcresult

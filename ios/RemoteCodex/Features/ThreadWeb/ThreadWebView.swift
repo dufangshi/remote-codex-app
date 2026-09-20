@@ -1,6 +1,169 @@
 import SwiftUI
 import WebKit
 
+struct ProductRootView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var store: SessionStore
+    @Environment(\.colorScheme) private var colorScheme
+    var body: some View {
+        Group {
+            if !store.hasRelayUrl { ConnectScreen(store: store) { model.webTarget = "/" } }
+            else { ProductWebView(store: store, target: model.webTarget).id(store.relayUrl) }
+        }
+        .preferredColorScheme(store.themeMode == .system ? nil : (store.themeMode == .dark ? .dark : .light))
+        .environment(\.rcColors, store.themeMode == .dark || (store.themeMode == .system && colorScheme == .dark) ? .dark : .light)
+        .onAppear { EventWatcher.shared.requestPermission() }
+    }
+}
+
+struct ProductWebView: UIViewControllerRepresentable {
+    let store: SessionStore
+    let target: String
+    func makeUIViewController(context: Context) -> ProductWebController { ProductWebController(store: store) }
+    func updateUIViewController(_ controller: ProductWebController, context: Context) { controller.open(target) }
+    static func dismantleUIViewController(_ controller: ProductWebController, coordinator: ()) { controller.close() }
+}
+
+final class ProductWebController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKHTTPCookieStoreObserver {
+    let store: SessionStore
+    private var web: WKWebView!
+    private var target = ""
+    private var bootstrapped = false
+    init(store: SessionStore) { self.store = store; super.init(nibName: nil, bundle: nil) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .default()
+        // App-bound domains enable real Service Workers and encrypted file routing.
+        config.limitsNavigationsToAppBoundDomains = true
+        config.userContentController.add(self, name: "remoteCodex")
+        if let script = Bundle.main.url(forResource: "native-bridge", withExtension: "js"), let source = try? String(contentsOf: script) {
+            config.userContentController.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+        web = WKWebView(frame: .zero, configuration: config)
+        web.navigationDelegate = self
+        web.uiDelegate = self
+        web.allowsBackForwardNavigationGestures = true
+        web.scrollView.contentInsetAdjustmentBehavior = .never
+        web.scrollView.bounces = false
+        web.accessibilityIdentifier = "productWebView"
+        web.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(web)
+        NSLayoutConstraint.activate([
+            web.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            web.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            web.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            web.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        config.websiteDataStore.httpCookieStore.add(self)
+    }
+    func open(_ path: String) {
+        loadViewIfNeeded()
+        guard target != path else { return }
+        target = path
+        guard let url = URL(string: store.relayUrl + path) else { return }
+        if !bootstrapped, !store.token.isEmpty, let host = url.host, let cookie = HTTPCookie(properties: [
+            .name: "remote_codex_relay_session", .value: store.token, .domain: host,
+            .path: "/", .secure: url.scheme == "https" ? "TRUE" : "FALSE",
+        ]) {
+            bootstrapped = true
+            web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { [weak self] in self?.web.load(URLRequest(url: url)) }
+        } else { bootstrapped = true; web.load(URLRequest(url: url)) }
+    }
+    func close() {
+        web?.configuration.userContentController.removeScriptMessageHandler(forName: "remoteCodex")
+        web?.configuration.websiteDataStore.httpCookieStore.remove(self)
+        EventWatcher.shared.openThread = nil
+    }
+    func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+        cookieStore.getAllCookies { [weak self] cookies in
+            guard let self, let host = URL(string: self.store.relayUrl)?.host else { return }
+            let token = cookies.first { $0.name == "remote_codex_relay_session" && $0.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")) == host }?.value ?? ""
+            DispatchQueue.main.async {
+                guard self.store.token != token else { return }
+                self.store.token = token
+                if token.isEmpty { EventWatcher.shared.stop() } else { EventWatcher.shared.start() }
+            }
+        }
+    }
+    private func trusted(_ url: URL?) -> Bool {
+        guard let url, let relay = URL(string: store.relayUrl) else { return false }
+        return url.scheme == relay.scheme && url.host == relay.host && (url.port ?? (url.scheme == "https" ? 443 : 80)) == (relay.port ?? (relay.scheme == "https" ? 443 : 80))
+    }
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, trusted(message.frameInfo.request.url), let raw = message.body as? String,
+              let data = raw.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        switch value["type"] as? String {
+        case "state":
+            #if DEBUG
+            web.accessibilityValue = value["path"] as? String
+            #endif
+            if let mode = value["theme"] as? String, let theme = ThemeMode(rawValue: mode), store.themeMode != theme { store.themeMode = theme }
+            if let path = value["path"] as? String, let url = URL(string: store.relayUrl + path), case .threadDetail(let device, let thread, _) = nativeRoute(for: url, deviceId: store.deviceId) {
+                EventWatcher.shared.openThread = (device, thread)
+            } else { EventWatcher.shared.openThread = nil }
+            cookiesDidChange(in: web.configuration.websiteDataStore.httpCookieStore)
+        case "changeRelay":
+            EventWatcher.shared.stop()
+            WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {
+                DispatchQueue.main.async { self.store.clearSession(); self.store.relayUrl = "" }
+            }
+        case "notificationSettings":
+            if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
+        case "share":
+            var items: [Any] = []
+            if let text = value["text"] as? String, !text.isEmpty { items.append(text) }
+            if let raw = value["url"] as? String, let url = URL(string: raw), ["https", "http"].contains(url.scheme ?? "") { items.append(url) }
+            let id = value["id"] as? Int ?? 0
+            let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            sheet.completionWithItemsHandler = { [weak self] _, _, _, error in
+                let argument = (try? JSONSerialization.data(withJSONObject: [error.map { $0.localizedDescription as Any } ?? NSNull()], options: [.fragmentsAllowed])).flatMap { String(data: $0, encoding: .utf8) } ?? "[null]"
+                self?.web.evaluateJavaScript("window.remoteCodexNative.resolve(\(id),\(argument)[0])")
+            }
+            show(sheet)
+        case "download":
+            guard let raw = value["data"] as? String, raw.utf8.count <= 45 * 1024 * 1024,
+                  let encoded = raw.split(separator: ",", maxSplits: 1).last, let bytes = Data(base64Encoded: String(encoded)) else { return }
+            let name = (value["name"] as? String ?? "download").replacingOccurrences(of: "\\", with: "/").split(separator: "/").last.map(String.init) ?? "download"
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let file = dir.appendingPathComponent(name)
+                try bytes.write(to: file)
+                let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+                sheet.completionWithItemsHandler = { _, _, _, _ in try? FileManager.default.removeItem(at: dir) }
+                show(sheet)
+            } catch { showError(error.localizedDescription) }
+        case "error": showError(value["message"] as? String ?? "Unable to complete action.")
+        default: break
+        }
+    }
+    private func show(_ sheet: UIViewController) {
+        sheet.popoverPresentationController?.sourceView = view
+        sheet.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+        present(sheet, animated: true)
+    }
+    private func showError(_ message: String) {
+        let alert = UIAlertController(title: "Remote Codex", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        showError(error.localizedDescription)
+    }
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard action.targetFrame?.isMainFrame != false, let url = action.request.url else { decisionHandler(.allow); return }
+        if trusted(url) || url.scheme == "blob" { decisionHandler(.allow); return }
+        decisionHandler(.cancel)
+        if ["https", "http", "mailto", "tel"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
+    }
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = action.request.url, ["https", "http"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
+        return nil
+    }
+}
+
 struct ThreadScreen: View {
     let store: SessionStore
     let deviceId: String
