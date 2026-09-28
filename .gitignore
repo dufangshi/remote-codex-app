@@ -25,3 +25,8 @@ ios/*.xcodeproj/xcuserdata/
 ios/*.xcodeproj/project.xcworkspace/xcuserdata/
 xcuserdata/
 .xcode-version
+
+# macOS
+macos/.build/
+macos/build/
+macos/.swiftpm/

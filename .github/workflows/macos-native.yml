@@ -1,0 +1,31 @@
+name: macOS native client
+on:
+  pull_request:
+    paths: ['macos/**', '.github/workflows/macos-native.yml']
+  push:
+    branches: [main]
+    paths: ['macos/**', '.github/workflows/macos-native.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-native-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v6
+      - name: Native protocol tests
+        run: swift test
+      - name: Build local preview bundle
+        run: bash scripts/build-app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-codex-macos-native-preview
+          path: macos/build/Remote-Codex-macOS-*.zip
+          if-no-files-found: error
