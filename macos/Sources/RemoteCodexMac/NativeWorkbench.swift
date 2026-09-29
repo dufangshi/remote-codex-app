@@ -185,7 +185,7 @@ struct NativeWorkbench: View {
                 Button(state.pinnedThreads.contains(thread.id) ? "Unpin" : "Pin to Shortcuts") { state.togglePin(thread.id) }
                 Button("Rename…") { title = thread.title; renaming = thread }
                 Button("Delete…", role: .destructive) { deleting = thread }.disabled(thread.activeTurnId != nil)
-            } label: { Image(systemName: "ellipsis").frame(width: 22, height: 28) }
+            } label: { Image(systemName: "ellipsis").foregroundStyle(Palette.muted).frame(width: 22, height: 28) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().padding(.trailing, 6).accessibilityLabel("Actions for " + thread.title)
         }.background(state.threadID == thread.id ? Palette.selected : .clear, in: RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9).stroke(state.threadID == thread.id ? Palette.muted.opacity(0.45) : .clear))
@@ -226,13 +226,12 @@ struct NativeWorkbench: View {
             IconButton(title: "Sharing permissions", icon: "person.2") { state.activeShareSheet = .permissions }
             IconButton(title: "Download transcript", icon: "arrow.down.to.line") { state.activeShareSheet = .transcript }
             Menu {
-                Button("Model and reasoning…") { Task { await state.prepareThreadSettings() } }
                 Button("Copy Remote Codex session ID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(state.threadID ?? "", forType: .string) }
                 if let thread = state.detail?.thread {
                     Button("Rename…") { title = thread.title; renaming = thread }
                     Button("Delete…", role: .destructive) { deleting = thread }.disabled(state.active)
                 }
-            } label: { Image(systemName: "ellipsis").frame(width: 30, height: 32).contentShape(Rectangle()) }
+            } label: { Image(systemName: "ellipsis").foregroundStyle(Palette.muted).frame(width: 30, height: 32).contentShape(Rectangle()) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Thread actions")
             IconButton(title: "Toggle Explorer", icon: "sidebar.right") { state.contentMode = state.contentMode == "files" ? "chat" : "files" }
         }.padding(.horizontal, 12).frame(height: 46).glassBar()

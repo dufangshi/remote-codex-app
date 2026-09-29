@@ -20,28 +20,33 @@ struct ThreadSharingPermissionsView: View {
         return shares + grants
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack { Text("Sharing permissions").font(.title2.bold()); Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
-            Text("Choose who can view or collaborate on this thread.").foregroundStyle(Palette.muted)
+        VStack(alignment: .leading, spacing: 18) {
+            SheetHeader(title: "Sharing permissions", subtitle: "Choose who can view or collaborate on this thread.", close: { dismiss() })
             if let error = state.error { InlineError(message: error) { state.error = nil } }
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(entries) { entry in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(entry.grant.targetUsername ?? "Someone").fontWeight(.medium)
-                                Text((entry.isShare ? "" : "Whole device · ") + "Thread: \(entry.grant.threadAccess ?? "read") · Workspace: \(entry.grant.workspaceAccess ?? "none")")
-                                    .font(.caption).foregroundStyle(Palette.muted)
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(entry.grant.targetUsername ?? "Someone").font(.system(size: 13, weight: .medium))
+                                HStack(spacing: 6) {
+                                    if !entry.isShare { StatusBadge(text: "Whole device", tint: Palette.muted) }
+                                    Text("Thread: \(entry.grant.threadAccess ?? "read") · Workspace: \(entry.grant.workspaceAccess ?? "none")")
+                                        .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                                }
                             }
                             Spacer()
-                            Button("Edit") { editing = entry }
-                            Button("Revoke", role: .destructive) { revoking = entry }
-                        }.padding(12).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
+                            Button("Edit") { editing = entry }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.accent)
+                            Button("Revoke") { revoking = entry }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.red).padding(.leading, 4)
+                        }.padding(12).background(Palette.surface, in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.border, lineWidth: 1))
                     }
-                    if entries.isEmpty { Text("Only you can access this thread.").font(.caption).foregroundStyle(Palette.muted).padding(.vertical, 8) }
+                    if entries.isEmpty { Text("Only you can access this thread.").font(.system(size: 12)).foregroundStyle(Palette.muted).padding(.vertical, 8) }
                 }
             }
-            Button { inviting = true } label: { Label("Invite someone", systemImage: "person.badge.plus") }.buttonStyle(.borderedProminent)
+            Button { inviting = true } label: {
+                Label("Invite someone", systemImage: "person.badge.plus").frame(maxWidth: .infinity).padding(.vertical, 2)
+            }.buttonStyle(.borderedProminent).tint(Palette.accent).controlSize(.large)
         }.padding(24).frame(width: 460, height: 480).glassBar()
             .task { await state.refreshPortal() }
             .sheet(isPresented: $inviting) {

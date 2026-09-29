@@ -118,6 +118,92 @@ struct SlashToolIcon: Shape {
     }
 }
 
+/// Title + circular close button, for the native Settings/Share/Permissions/
+/// Transcript sheets that replaced the old embedded web dialog.
+struct SheetHeader: View {
+    let title: String
+    var subtitle: String? = nil
+    let close: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top) {
+                Text(title).font(.system(size: 20, weight: .bold))
+                Spacer()
+                Button(action: close) { Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)) }
+                    .buttonStyle(.plain).foregroundStyle(Palette.muted).padding(7)
+                    .background(Palette.surface, in: Circle()).accessibilityLabel("Close")
+            }
+            if let subtitle { Text(subtitle).font(.system(size: 13)).foregroundStyle(Palette.muted) }
+        }
+    }
+}
+
+/// A selectable card row, used instead of raw AppKit radio buttons for a
+/// more deliberately-designed look matching the web app's option lists.
+struct SelectableRow: View {
+    let title: String
+    var subtitle: String? = nil
+    let selected: Bool
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? Palette.accent : Palette.muted).font(.system(size: 16)).padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.text)
+                    if let subtitle { Text(subtitle).font(.system(size: 11)).foregroundStyle(Palette.muted) }
+                }
+                Spacer(minLength: 0)
+            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(selected ? Palette.accent.opacity(0.10) : Palette.surface, in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(selected ? Palette.accent.opacity(0.5) : Palette.border, lineWidth: 1))
+        }.buttonStyle(.plain)
+    }
+}
+
+/// A checkbox-style row for multi-select lists (e.g. picking transcript turns).
+struct SelectableCheckRow: View {
+    let title: String
+    var subtitle: String? = nil
+    let checked: Bool
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(checked ? Palette.accent : Palette.muted).font(.system(size: 15)).padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.text)
+                    if let subtitle { Text(subtitle).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1) }
+                }
+                Spacer(minLength: 0)
+            }.padding(.vertical, 6).padding(.horizontal, 8).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+}
+
+/// Small rounded-capsule status label, e.g. "Live" / "Snapshot" on a share link.
+struct StatusBadge: View {
+    let text: String
+    var tint: Color = Palette.accent
+    var body: some View {
+        Text(text.uppercased()).font(.system(size: 10, weight: .bold)).tracking(0.5)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(tint.opacity(0.15), in: Capsule()).foregroundStyle(tint)
+    }
+}
+
+/// A rounded card grouping related content, for sheet sections.
+struct SheetCard<Content: View>: View {
+    @ViewBuilder let content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) { content }
+            .padding(14).background(Palette.surface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.border, lineWidth: 1))
+    }
+}
+
 struct MenuRowStyle: ButtonStyle {
     var selected = false
     @State private var hovered = false

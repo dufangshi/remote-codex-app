@@ -190,7 +190,7 @@ private struct NativeTurnView: View {
                 Menu {
                     Button("Copy turn") { copy(turn.items.map(\.text).joined(separator: "\n\n")) }
                     Button("Fork from this turn…") { forkConfirm = true }
-                } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                } label: { Image(systemName: "ellipsis").foregroundStyle(Palette.muted) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }.font(.system(size: textSize.points(11))).foregroundStyle(Palette.muted)
             if toolsOpen {
                 if let failure { InlineError(message: failure) { self.failure = nil }; Button("Retry activity") { detailRevision += 1 } }

@@ -90,20 +90,21 @@ private struct FileRow: View {
     @ObservedObject var files: WorkspaceFiles
     @State private var hovered = false
     var body: some View {
-        HStack(spacing: 9) {
-            Button { Task { await files.open(node) } } label: {
-                HStack(spacing: 9) {
-                    Image(systemName: node.isDirectory ? "folder.fill" : "doc.text").foregroundStyle(node.isDirectory ? Color.accentColor : Color.secondary)
-                    Text(node.name).lineLimit(1)
+        Button { Task { await files.open(node) } } label: {
+            HStack(spacing: 9) {
+                Image(systemName: node.isDirectory ? "folder.fill" : "doc.text").foregroundStyle(node.isDirectory ? Color.accentColor : Color.secondary)
+                Text(node.name).lineLimit(1)
+                Spacer()
+                if node.isDirectory { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
+            }.padding(.vertical, 4).padding(.trailing, hovered ? 22 : 0).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityIdentifier("file-" + node.name)
+            .overlay(alignment: .trailing) {
+                if hovered {
+                    Button { Task { await files.download(node.path, isDirectory: node.isDirectory) } } label: { Image(systemName: "arrow.down.circle") }
+                        .buttonStyle(.plain).foregroundStyle(Palette.muted).help("Download " + node.name).accessibilityLabel("Download " + node.name)
                 }
-            }.buttonStyle(.plain).accessibilityIdentifier("file-" + node.name)
-            Spacer()
-            if hovered {
-                Button { Task { await files.download(node.path, isDirectory: node.isDirectory) } } label: { Image(systemName: "arrow.down.circle") }
-                    .buttonStyle(.plain).foregroundStyle(Palette.muted).help("Download " + node.name).accessibilityLabel("Download " + node.name)
             }
-            if node.isDirectory { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
-        }.padding(.vertical, 4).contentShape(Rectangle()).onHover { hovered = $0 }
+            .onHover { hovered = $0 }
             .contextMenu {
                 Button("Download…") { Task { await files.download(node.path, isDirectory: node.isDirectory) } }
                 Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(node.path, forType: .string) }

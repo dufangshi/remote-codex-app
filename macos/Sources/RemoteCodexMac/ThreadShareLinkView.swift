@@ -16,63 +16,57 @@ struct ThreadShareLinkView: View {
     @State private var failure: String?
     @State private var copiedID: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack { Text("Share as link").font(.title2.bold()); Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
-            Text("Anyone with the link can read the selected prompts, images and final replies.").foregroundStyle(Palette.muted)
-            if let failure { Text(failure).foregroundStyle(.red) }
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 18) {
+            SheetHeader(title: "Share as link", subtitle: "Anyone with the link can read the selected prompts, images and final replies.", close: { dismiss() })
+            if let failure { Text(failure).font(.system(size: 12)).foregroundStyle(.red) }
+            SheetCard {
                 Text("Turns to share").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted)
-                Picker("", selection: $scope) {
-                    Text("All current turns" + (loaded ? " (\(turns.count))" : "")).tag("all")
-                    Text("Choose turns").tag("selected")
-                }.pickerStyle(.radioGroup).labelsHidden()
-                if !loaded { ProgressView().controlSize(.small) }
+                SelectableRow(title: "All current turns" + (loaded ? " (\(turns.count))" : ""), selected: scope == "all") { scope = "all" }
+                SelectableRow(title: "Choose turns", selected: scope == "selected") { scope = "selected" }
+                if !loaded { ProgressView().controlSize(.small).frame(maxWidth: .infinity) }
                 else if scope == "selected" {
-                    HStack { Text("\(selected.count) selected").font(.caption).foregroundStyle(Palette.muted); Spacer(); Button("Clear selection") { selected.removeAll() } }
+                    HStack { Text("\(selected.count) selected").font(.system(size: 11)).foregroundStyle(Palette.muted); Spacer(); Button("Clear selection") { selected.removeAll() }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.accent) }
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 2) {
                             ForEach(turns) { turn in
-                                Button {
+                                SelectableCheckRow(title: "Turn \(turn.turnNumber)", subtitle: turn.userPromptPreview?.isEmpty == false ? turn.userPromptPreview! : "No prompt text", checked: selected.contains(turn.turnId)) {
                                     if selected.contains(turn.turnId) { selected.remove(turn.turnId) } else { selected.insert(turn.turnId) }
-                                } label: {
-                                    HStack(alignment: .top, spacing: 8) {
-                                        Image(systemName: selected.contains(turn.turnId) ? "checkmark.square.fill" : "square").foregroundStyle(selected.contains(turn.turnId) ? Palette.accent : Palette.muted)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Turn \(turn.turnNumber)").font(.system(size: 13, weight: .medium))
-                                            Text(turn.userPromptPreview?.isEmpty == false ? turn.userPromptPreview! : "No prompt text").font(.caption).foregroundStyle(Palette.muted).lineLimit(1)
-                                        }
-                                    }
-                                }.buttonStyle(.plain)
+                                }
                             }
                         }
-                    }.frame(maxHeight: 160)
+                    }.frame(maxHeight: 150).background(Palette.background, in: RoundedRectangle(cornerRadius: 8))
                 }
-            }.padding(12).glassBar()
+            }
             Button { Task { await create() } } label: {
                 HStack { Image(systemName: "link"); Text(busy ? "Creating link…" : "Create & copy link") }
-            }.buttonStyle(.borderedProminent).disabled(busy || !loaded || (scope == "selected" ? selected.isEmpty : turns.isEmpty))
-            if copiedID != nil { Label("Read-only link copied", systemImage: "checkmark").foregroundStyle(Palette.accent) }
-            Divider()
+                    .frame(maxWidth: .infinity).padding(.vertical, 2)
+            }.buttonStyle(.borderedProminent).tint(Palette.accent).controlSize(.large)
+                .disabled(busy || !loaded || (scope == "selected" ? selected.isEmpty : turns.isEmpty))
+            if copiedID != nil { Label("Read-only link copied", systemImage: "checkmark").font(.system(size: 12)).foregroundStyle(Palette.accent) }
+            Text("Shared links").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted)
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(links) { link in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Text((link.live == true ? "Live" : "Snapshot") + " · \(link.turnCount) turns · " + timestamp(link.createdAt)).font(.caption).foregroundStyle(Palette.muted)
+                                StatusBadge(text: link.live == true ? "Live" : "Snapshot", tint: link.live == true ? Palette.accent : Palette.muted)
+                                Text("\(link.turnCount) turns · " + timestamp(link.createdAt)).font(.system(size: 11)).foregroundStyle(Palette.muted)
                                 Spacer()
                                 Button { Task { await revoke(link) } } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(.red).help("Revoke link")
                             }
-                            HStack {
+                            HStack(spacing: 8) {
                                 Text(url(for: link)).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                                Spacer()
-                                Button { copy(link) } label: { Image(systemName: copiedID == link.id ? "checkmark" : "doc.on.doc") }.buttonStyle(.plain)
+                                    .padding(.horizontal, 8).padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Palette.background, in: RoundedRectangle(cornerRadius: 6))
+                                Button { copy(link) } label: { Image(systemName: copiedID == link.id ? "checkmark" : "doc.on.doc") }.buttonStyle(.plain).foregroundStyle(copiedID == link.id ? Palette.accent : Palette.muted)
                             }
-                        }.padding(10).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
+                        }.padding(10).background(Palette.surface, in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.border, lineWidth: 1))
                     }
-                    if links.isEmpty { Text("No links shared yet.").font(.caption).foregroundStyle(Palette.muted) }
+                    if links.isEmpty { Text("No links shared yet.").font(.system(size: 12)).foregroundStyle(Palette.muted) }
                 }
             }
-        }.padding(24).frame(width: 460, height: 560).glassBar()
+        }.padding(24).frame(width: 460, height: 600).glassBar()
             .task { await loadTurns(); await loadLinks() }
     }
     private func url(for link: ThreadPublicLink) -> String { (state.client?.origin.absoluteString ?? "") + "/s/" + link.id }

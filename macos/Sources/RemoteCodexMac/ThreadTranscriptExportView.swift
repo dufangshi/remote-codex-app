@@ -15,42 +15,45 @@ struct ThreadTranscriptExportView: View {
     private let limitChoices = [3, 10, 20, 0]
     private func limitLabel(_ value: Int) -> String { value == 0 ? "All" : "\(value)" }
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack { Text("Download transcript").font(.title2.bold()); Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
-            Text("Save a readable copy of your conversation as HTML.").foregroundStyle(Palette.muted)
-            if let failure { Text(failure).foregroundStyle(.red) }
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("", selection: $mode) { Text("Latest turns").tag("latest"); Text("Choose turns").tag("custom") }.pickerStyle(.radioGroup).labelsHidden()
-                if !loaded { ProgressView().controlSize(.small) }
-                else if mode == "latest" {
-                    Picker("Turns", selection: $limitChoice) { ForEach(limitChoices, id: \.self) { Text(limitLabel($0)).tag($0) } }.pickerStyle(.segmented).frame(width: 260)
-                } else {
-                    HStack { Text("\(selected.count) selected").font(.caption).foregroundStyle(Palette.muted); Spacer(); Button("Clear selection") { selected.removeAll() } }
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(turns) { turn in
-                                Button {
-                                    if selected.contains(turn.turnId) { selected.remove(turn.turnId) } else { selected.insert(turn.turnId) }
-                                } label: {
-                                    HStack(alignment: .top, spacing: 8) {
-                                        Image(systemName: selected.contains(turn.turnId) ? "checkmark.square.fill" : "square").foregroundStyle(selected.contains(turn.turnId) ? Palette.accent : Palette.muted)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Turn \(turn.turnNumber)").font(.system(size: 13, weight: .medium))
-                                            Text(turn.userPromptPreview?.isEmpty == false ? turn.userPromptPreview! : "No prompt text").font(.caption).foregroundStyle(Palette.muted).lineLimit(1)
-                                        }
-                                    }
-                                }.buttonStyle(.plain)
-                            }
+        VStack(alignment: .leading, spacing: 18) {
+            SheetHeader(title: "Download transcript", subtitle: "Save a readable copy of your conversation as HTML.", close: { dismiss() })
+            if let failure { Text(failure).font(.system(size: 12)).foregroundStyle(.red) }
+            SheetCard {
+                SelectableRow(title: "Latest turns", selected: mode == "latest") { mode = "latest" }
+                if mode == "latest" {
+                    HStack(spacing: 6) {
+                        ForEach(limitChoices, id: \.self) { value in
+                            Button(limitLabel(value)) { limitChoice = value }
+                                .buttonStyle(WorkbenchButton(selected: limitChoice == value)).frame(maxWidth: .infinity)
                         }
-                    }.frame(maxHeight: 160)
+                    }.padding(.leading, 26)
                 }
+                SelectableRow(title: "Choose turns", selected: mode == "custom") { mode = "custom" }
+                if mode == "custom" {
+                    if !loaded { ProgressView().controlSize(.small).frame(maxWidth: .infinity) }
+                    else {
+                        HStack { Text("\(selected.count) selected").font(.system(size: 11)).foregroundStyle(Palette.muted); Spacer(); Button("Clear selection") { selected.removeAll() }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.accent) }
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(turns) { turn in
+                                    SelectableCheckRow(title: "Turn \(turn.turnNumber)", subtitle: turn.userPromptPreview?.isEmpty == false ? turn.userPromptPreview! : "No prompt text", checked: selected.contains(turn.turnId)) {
+                                        if selected.contains(turn.turnId) { selected.remove(turn.turnId) } else { selected.insert(turn.turnId) }
+                                    }
+                                }
+                            }
+                        }.frame(maxHeight: 140).background(Palette.background, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+                Divider().overlay(Palette.border)
                 Toggle("Include token usage and price", isOn: $includeTokenAndPrice)
-            }.padding(12).glassBar()
+            }
             Spacer(minLength: 0)
             Button { Task { await export() } } label: {
                 HStack { Image(systemName: "arrow.down.to.line"); Text(busy ? "Exporting…" : "Export HTML") }
-            }.buttonStyle(.borderedProminent).disabled(busy || !loaded || (mode == "custom" && selected.isEmpty))
-        }.padding(24).frame(width: 420, height: 460).glassBar()
+                    .frame(maxWidth: .infinity).padding(.vertical, 2)
+            }.buttonStyle(.borderedProminent).tint(Palette.accent).controlSize(.large)
+                .disabled(busy || (mode == "custom" && (!loaded || selected.isEmpty)))
+        }.padding(24).frame(width: 420, height: 480).glassBar()
             .task { await load() }
     }
     private func load() async {

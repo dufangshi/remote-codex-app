@@ -132,7 +132,7 @@ struct PortalPages: View {
                                 Button("Share device") { sharing = device }
                                 Button("Replace device token") { rotating = device }.disabled(device.hostedStatus != nil)
                                 Divider(); Button("Delete device", role: .destructive) { deletingDevice = device }.disabled(device.hostedStatus != nil)
-                            } label: { Image(systemName: "ellipsis").frame(width: 32, height: 36) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("More actions for " + device.name)
+                            } label: { Image(systemName: "ellipsis").foregroundStyle(Palette.muted).frame(width: 32, height: 36) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("More actions for " + device.name)
                         }.frame(width: 150)
                     }.padding(12)
                 }
@@ -187,7 +187,7 @@ struct PortalPages: View {
                             Button("View path") { path = workspace.absPath }
                             Button("Rename workspace") { name = workspace.label; editing = workspace }
                             Button("Delete workspace", role: .destructive) { deletingWorkspace = workspace }
-                        } label: { Image(systemName: "ellipsis").frame(width: 32, height: 40) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().padding(.trailing, 12).accessibilityLabel("More actions for " + workspace.label)
+                        } label: { Image(systemName: "ellipsis").foregroundStyle(Palette.muted).frame(width: 32, height: 40) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().padding(.trailing, 12).accessibilityLabel("More actions for " + workspace.label)
                     }
                     Divider().overlay(Palette.border)
                 }

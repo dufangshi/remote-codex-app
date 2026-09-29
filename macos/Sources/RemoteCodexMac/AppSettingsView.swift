@@ -11,17 +11,29 @@ struct AppSettingsView: View {
     @AppStorage("native-reasoning-summaries") private var reasoningSummaries = false
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            HStack { Text("Settings").font(.title2.bold()); Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
-            Form {
-                Picker("Appearance", selection: $appearance) {
-                    Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark")
+            SheetHeader(title: "Settings", close: { dismiss() })
+            SheetCard {
+                Text("Appearance").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted)
+                HStack(spacing: 8) {
+                    ForEach([("system", "System"), ("light", "Light"), ("dark", "Dark")], id: \.0) { value, label in
+                        Button(label) { appearance = value }
+                            .buttonStyle(WorkbenchButton(selected: appearance == value)).frame(maxWidth: .infinity)
+                    }
                 }
-                Stepper("Text size: \(fontSize)pt", value: Binding(
-                    get: { fontSize }, set: { fontSize = $0.clampedFontSize }
-                ), in: 12...22)
+            }
+            SheetCard {
+                HStack {
+                    Text("Text size").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted)
+                    Spacer()
+                    Text("\(fontSize)pt").font(.system(size: 12, design: .monospaced)).foregroundStyle(Palette.muted)
+                }
+                Stepper("", value: Binding(get: { fontSize }, set: { fontSize = $0.clampedFontSize }), in: 12...22).labelsHidden()
+            }
+            SheetCard {
                 Toggle("Auto-collapse completed turns", isOn: $autoCollapse)
+                Divider().overlay(Palette.border)
                 Toggle("Show reasoning summaries", isOn: $reasoningSummaries)
             }
-        }.padding(28).frame(width: 420).glassBar()
+        }.padding(24).frame(width: 420).glassBar()
     }
 }
