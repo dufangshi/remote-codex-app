@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import RemoteCodexCore
 
 /// Full relay feature surface for advanced tools not yet duplicated natively.
 /// Session cookies are copied only to an ephemeral, origin-bound WebKit store.
@@ -7,25 +8,132 @@ struct FullWorkspaceView: NSViewRepresentable {
     let url: URL
     let cookies: [HTTPCookie]
     let reportError: (String) -> Void
-    func makeCoordinator() -> Coordinator { Coordinator(origin: url, reportError: reportError) }
+    var browser: WorkspaceBrowser? = nil
+    func makeCoordinator() -> Coordinator { Coordinator(origin: url, reportError: reportError, browser: browser) }
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
+        if browser != nil {
+            config.userContentController.addUserScript(WKUserScript(source: Self.observerScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            config.userContentController.add(context.coordinator, name: "workspaceState")
+        }
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = context.coordinator; web.uiDelegate = context.coordinator
         web.allowsBackForwardNavigationGestures = true
-        context.coordinator.load(web, url: url, cookies: cookies)
+        if let browser {
+            browser.web = web; browser.coordinator = context.coordinator
+            context.coordinator.requestedURL = url
+            context.coordinator.bootstrapping = true
+            web.loadHTMLString("<!doctype html><meta charset=utf-8><title>Connecting</title>", baseURL: browser.origin)
+        } else { context.coordinator.load(web, url: url, cookies: cookies) }
         return web
     }
     func updateNSView(_ web: WKWebView, context: Context) {
         if context.coordinator.requestedURL != url { context.coordinator.load(web, url: url, cookies: cookies) }
     }
-    static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) { web.stopLoading(); web.navigationDelegate = nil; web.uiDelegate = nil }
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+    static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
+        web.stopLoading(); web.navigationDelegate = nil; web.uiDelegate = nil
+        web.configuration.websiteDataStore.httpCookieStore.remove(coordinator)
+        web.configuration.userContentController.removeScriptMessageHandler(forName: "workspaceState")
+    }
+    // Only public identity keys and named UI preferences cross this bridge. Never cookies,
+    // auth tokens, arbitrary localStorage, file contents or conversation text.
+    static let observerScript = #"""
+    if (location.protocol === 'http:' || location.protocol === 'https:') {
+      let busy = false;
+      const capture = async () => {
+        if (busy) return; busy = true;
+        try {
+          const preferences = {};
+          for (const key of ['remote-codex-theme-mode','remote-codex-default-backend','remote-codex-auto-collapse-completed-turns','remote-codex-show-reasoning-summaries','remote-codex.explorer-width']) {
+            const value = localStorage.getItem(key); if(value !== null) preferences[key] = value;
+          }
+          const pins = await new Promise((resolve, reject) => {
+            const r = indexedDB.open('remote-codex-transport-v1', 1);
+            r.onupgradeneeded = () => r.result.createObjectStore('identities');
+            r.onerror = () => reject(r.error);
+            r.onsuccess = () => {
+              const db = r.result, tx = db.transaction('identities'), result = {};
+              const cursor = tx.objectStore('identities').openCursor();
+              cursor.onsuccess = () => { const c = cursor.result; if(c) { result[c.key] = c.value; c.continue(); } };
+              tx.oncomplete = () => { db.close(); resolve(result); };
+              tx.onerror = () => { db.close(); reject(tx.error); };
+            };
+          });
+          window.webkit.messageHandlers.workspaceState.postMessage({href: location.href, profile: {preferences, pins}});
+        } finally { busy = false; }
+      };
+      setInterval(() => capture().catch(() => {}), 1500);
+      capture().catch(() => {});
+    }
+    """#
+    static let bootstrapScript = #"""
+      for (const [key,value] of Object.entries(preferences)) localStorage.setItem(key,value);
+      await new Promise((resolve,reject) => {
+        const r = indexedDB.open('remote-codex-transport-v1',1);
+        r.onupgradeneeded = () => r.result.createObjectStore('identities');
+        r.onerror = () => reject(r.error);
+        r.onsuccess = () => {
+          const db = r.result, tx = db.transaction('identities','readwrite');
+          for(const [id,key] of Object.entries(pins)) tx.objectStore('identities').put(key,id);
+          tx.oncomplete = () => {db.close();resolve(true);};
+          tx.onerror = () => {db.close();reject(tx.error);};
+        };
+      });
+      return true;
+    """#
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler, WKHTTPCookieStoreObserver {
         let origin: URL
         let reportError: (String) -> Void
         var requestedURL: URL?
-        init(origin: URL, reportError: @escaping (String) -> Void) { self.origin = origin; self.reportError = reportError }
+        weak var browser: WorkspaceBrowser?
+        var bootstrapping = false
+        var observingCookies = false
+        init(origin: URL, reportError: @escaping (String) -> Void, browser: WorkspaceBrowser?) { self.origin = origin; self.reportError = reportError; self.browser = browser }
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard !bootstrapping, message.frameInfo.isMainFrame,
+                  let source = message.frameInfo.request.url, BrowserPolicy.sameOrigin(source, origin),
+                  let body = message.body as? [String: Any], let href = body["href"] as? String,
+                  let location = URL(string: href), BrowserPolicy.sameOrigin(location, origin),
+                  let profile = body["profile"] as? [String: Any], let pins = profile["pins"] as? [String: String],
+                  let preferences = profile["preferences"] as? [String: String],
+                  pins.allSatisfy({ UUID(uuidString: $0.key) != nil && $0.value.count < 512 }),
+                  preferences.allSatisfy({ WorkspaceBrowser.preferenceKeys.contains($0.key) && $0.value.count < 256 }) else { return }
+            browser?.remember(location)
+            browser?.canGoBack = message.webView?.canGoBack ?? false; browser?.canGoForward = message.webView?.canGoForward ?? false
+            Task { await browser?.persistProfile(["pins": pins, "preferences": preferences]) }
+        }
+        func webView(_ web: WKWebView, didFinish navigation: WKNavigation!) {
+            if bootstrapping, let browser {
+                Task { @MainActor in
+                    do {
+                        _ = try await web.callAsyncJavaScript(FullWorkspaceView.bootstrapScript, arguments: ["pins": browser.initialPins, "preferences": browser.initialPreferences], in: nil, contentWorld: .page)
+                        bootstrapping = false
+                        if let url = requestedURL { load(web, url: url, cookies: browser.cookies) }
+                    } catch { browser.loading = false; reportError("Cannot restore encrypted workspace trust: \(error.localizedDescription)") }
+                }
+            } else {
+                browser?.loading = false; if let url = web.url { browser?.remember(url) }
+                if browser != nil, !observingCookies {
+                    observingCookies = true
+                    web.configuration.websiteDataStore.httpCookieStore.add(self)
+                }
+            }
+        }
+        func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+            guard observingCookies, let client = browser?.client else { return }
+            Task {
+                let cookies = await cookieStore.allCookies()
+                let session = cookies.first { $0.name == "remote_codex_relay_session" && $0.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")) == origin.host && $0.path == "/" }
+                do { try await client.syncBrowserSession(session?.value) }
+                catch { reportError("Could not synchronize relay sign-in: \(error.localizedDescription)") }
+            }
+        }
+        func webView(_ web: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { browser?.loading = true }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            browser?.loading = false; reportError("The workspace renderer stopped. Reload to reconnect; unsaved edits may need to be entered again.")
+        }
         func load(_ web: WKWebView, url: URL, cookies: [HTTPCookie]) {
             requestedURL = url
             Task { @MainActor [weak web] in
@@ -36,7 +144,8 @@ struct FullWorkspaceView: NSViewRepresentable {
         }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let target = action.request.url else { decisionHandler(.cancel); return }
-            let sameOrigin = target.scheme == origin.scheme && target.host == origin.host && target.port == origin.port
+            if bootstrapping, target.absoluteString == "about:blank" { decisionHandler(.allow); return }
+            let sameOrigin = BrowserPolicy.sameOrigin(target, origin)
             if sameOrigin { decisionHandler(action.shouldPerformDownload ? .download : .allow); return }
             if target.scheme == "blob", action.shouldPerformDownload,
                target.absoluteString.hasPrefix("blob:" + origin.scheme! + "://" + origin.host! + (origin.port.map { ":\($0)" } ?? "") + "/") { decisionHandler(.download); return }
@@ -45,11 +154,21 @@ struct FullWorkspaceView: NSViewRepresentable {
         }
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if action.targetFrame == nil, let target = action.request.url,
-               target.scheme == origin.scheme, target.host == origin.host, target.port == origin.port { webView.load(action.request) }
+               BrowserPolicy.sameOrigin(target, origin) { webView.load(action.request) }
             return nil
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            if (error as NSError).code != NSURLErrorCancelled { reportError(error.localizedDescription) }
+            if (error as NSError).code != NSURLErrorCancelled { browser?.loading = false; reportError(error.localizedDescription) }
+        }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            self.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
+        }
+        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+            let alert = NSAlert(); alert.messageText = message; alert.addButton(withTitle: "OK"); alert.runModal(); completionHandler()
+        }
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+            let alert = NSAlert(); alert.messageText = message; alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Continue")
+            completionHandler(alert.runModal() == .alertSecondButtonReturn)
         }
         func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
             let panel = NSOpenPanel(); panel.allowsMultipleSelection = parameters.allowsMultipleSelection; panel.canChooseDirectories = parameters.allowsDirectories

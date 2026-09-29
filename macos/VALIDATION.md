@@ -4,7 +4,7 @@ Development target: Apple Silicon, macOS 27.2, Xcode 27 beta; deployment minimum
 
 ## Automated checks
 
-- Swift package compilation and eight XCTest cases.
+- Swift package compilation and ten XCTest cases (nine-test run including real transport plus the added targeted browser-session regression).
 - Origin validation (HTTPS or loopback HTTP; no embedded credentials, paths or query).
 - Base64url, bounded binary packet parsing, truncated/malformed metadata rejection.
 - Signed descriptor challenge verification and tamper rejection.
@@ -12,7 +12,7 @@ Development target: Apple Silicon, macOS 27.2, Xcode 27 beta; deployment minimum
 - Photo tokenization, multipart manifest, MIME/header-injection rejection and attachment limits.
 - A fresh isolated real Rust 0.12.47 relay and fake-runtime Supervisor: native password login, device inventory, encrypted workspaces, encrypted model query, thread creation, prompt/reply, multipart photo upload and byte-identical encrypted image retrieval, changed-identity rejection, logout credential removal. Synthetic loopback fixture only; no production inference or host Supervisor restart.
 
-## Native UI checks
+## Historical native UI checks (0.1 / 0.2)
 
 - Launched the packaged `.app` and signed in to the isolated relay through the actual native controls.
 - Opened the three-column device/workspace/thread layout.
@@ -23,7 +23,9 @@ Development target: Apple Silicon, macOS 27.2, Xcode 27 beta; deployment minimum
 - Filtered threads with native search and sent a message using Command-Return in the AppKit composer.
 - Inspected both dark and light settings/chat appearance, then restored System appearance and signed out of the synthetic account.
 
-## Packaging observations
+## Current 0.3 UI checks
+
+See [PARITY.md](PARITY.md). The shared workbench replaces the native three-column layout as the default. Browser route confinement, sensitive-query exclusion, HttpOnly session synchronization and native identity migration have targeted tests. The protocol fixture run passed in 26 seconds; the new browser-session test passed separately after it was added.
 
 ## 0.2.0 regression checks
 

@@ -5,60 +5,72 @@ import RemoteCodexCore
 struct RemoteCodexApp: App {
     @NSApplicationDelegateAdaptor(NativeAppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
+    @StateObject private var browser = WorkspaceBrowser()
     @AppStorage("appearance") private var appearance = "system"
     var body: some Scene {
         Window("Remote Codex", id: "main") {
-            RootView().environmentObject(state)
-                .frame(minWidth: 940, minHeight: 640)
+            RootView(browser: browser).environmentObject(state)
+                .frame(minWidth: 800, minHeight: 600)
                 .tint(Color(red: 0.23, green: 0.39, blue: 0.94))
-                .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
-                .task { appDelegate.state = state; await state.restore() }
+                .preferredColorScheme(state.authenticated ? browser.colorScheme : appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
+                .task { appDelegate.state = state; appDelegate.browser = browser; await state.restore() }
         }
         .defaultSize(width: 1260, height: 820)
         .windowStyle(.automatic)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Thread") { Task { await state.prepareNewThread() } }
-                    .keyboardShortcut("n").disabled(state.workspaceID == nil)
+                Button("New Chat") { browser.perform("newThread") }.keyboardShortcut("n").disabled(browser.web == nil)
+            }
+            CommandGroup(replacing: .appSettings) {
+                Button("Workspace Settings…") { browser.perform("settings") }.keyboardShortcut(",").disabled(browser.web == nil)
+                SettingsLink { Text("Connection Settings…") }
             }
             CommandGroup(after: .toolbar) {
-                Button("Refresh") { Task { await state.refreshPortal(); await state.refreshLists(); await state.refreshThread() } }
-                    .keyboardShortcut("r")
-                Button("Open in Browser") { state.openWeb() }.keyboardShortcut("o", modifiers: [.command, .shift])
+                Button("Back") { browser.perform("back") }.keyboardShortcut("[").disabled(!browser.canGoBack)
+                Button("Forward") { browser.perform("forward") }.keyboardShortcut("]").disabled(!browser.canGoForward)
+                Button("Devices") { browser.perform("home") }.keyboardShortcut("h", modifiers: [.command, .shift])
+                Button("Reload Workspace…") { browser.perform("reload") }.keyboardShortcut("r")
+                Button("Open in Browser") { browser.openInBrowser() }.keyboardShortcut("o", modifiers: [.command, .shift])
+                Divider()
+                Button("Zoom In") { browser.perform("zoomIn") }.keyboardShortcut("+")
+                Button("Zoom Out") { browser.perform("zoomOut") }.keyboardShortcut("-")
+                Button("Actual Size") { browser.perform("actualSize") }.keyboardShortcut("0")
             }
         }
         Settings {
             Form {
-                Picker("Appearance", selection: $appearance) {
-                    Text("System").tag("system")
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
-                }
+                Text("Change appearance in Workspace Settings (⌘,). The window follows the workspace theme.").font(.callout)
                 Section("Connection") {
                     LabeledContent("Relay", value: state.relay)
                     LabeledContent("Transport", value: "HPKE · AES-256-GCM")
                     Text("Session tokens and device identity pins are stored in macOS Keychain.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Workspace") {
-                    Text("Native chat and file editing use encrypted device connections. The in-app full workspace provides the relay’s advanced settings, terminal and agent tools.")
-                    Button("Open Full Workspace") { state.openFullWorkspace() }
-                    Button("Sign Out", role: .destructive) { Task { await state.signOut() } }
+                    Text("The workspace uses the same UI as the relay website, including chat, files, terminals and settings. Window controls, menus, file dialogs and downloads are native macOS.")
+                    Button("Sign Out", role: .destructive) {
+                        let alert = NSAlert(); alert.messageText = "Sign out of this relay?"
+                        alert.informativeText = "Save edited files and drafts first. Your existing conversations remain on the device."
+                        alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Sign Out")
+                        if alert.runModal() == .alertSecondButtonReturn { Task { await state.signOut() } }
+                    }
                 }
             }.formStyle(.grouped).frame(width: 480, height: 460)
-                .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
+                .preferredColorScheme(browser.colorScheme)
         }
     }
 }
 
 struct RootView: View {
     @EnvironmentObject var state: AppState
+    @ObservedObject var browser: WorkspaceBrowser
     var body: some View {
         VStack(spacing: 0) {
             if !state.authenticated, let error = state.error {
                 InlineError(message: error) { state.error = nil }
             }
-            if state.authenticated { WorkspaceView() } else { SignInView() }
+            if state.authenticated { DesktopWorkspaceView(browser: browser) } else { SignInView() }
         }
+        .onChange(of: state.authenticated) { _, signedIn in if !signedIn { browser.reset() } }
     }
 }
 
