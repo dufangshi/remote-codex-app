@@ -134,7 +134,7 @@ struct ConversationView: View {
 }
 
 private struct NativeTurnView: View {
-    private var textSize = TextSizePreference()
+    var textSize = TextSizePreference()
     @EnvironmentObject var state: AppState
     let turn: Turn
     let thread: String
@@ -266,7 +266,7 @@ struct MessageView: View {
 }
 
 private struct PagedMessageText: View {
-    private var textSize = TextSizePreference()
+    var textSize = TextSizePreference()
     let text: String
     @State private var limit = 6000
     private var chunks: [String] {
@@ -316,7 +316,7 @@ struct NativeImage: View {
 }
 
 struct MarkdownContent: View {
-    private var textSize = TextSizePreference()
+    var textSize = TextSizePreference()
     @EnvironmentObject var state: AppState
     let text: String
     var document: String? = nil

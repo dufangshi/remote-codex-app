@@ -5,7 +5,7 @@ struct TraceTimestamp: View {
     let value: String
     let start: String?
     @State private var absolute = false
-    private var textSize = TextSizePreference()
+    var textSize = TextSizePreference()
     private var label: String {
         guard !absolute, let created = date(value), let began = date(start) else { return timestamp(value) }
         let seconds = max(0, Int(created.timeIntervalSince(began)))
@@ -21,7 +21,7 @@ struct TraceGroupView: View {
     let items: [HistoryItem]
     let thread: String
     @State private var expanded = false
-    private var textSize = TextSizePreference()
+    var textSize = TextSizePreference()
     private var command: Bool { items.first?.kind == "commandExecution" }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -54,7 +54,7 @@ struct TraceToolView: View {
     @State private var loading = false
     @State private var failure: String?
     @State private var retry = 0
-    private var textSize = TextSizePreference()
+    var textSize = TextSizePreference()
     private var command: Bool { item.kind == "commandExecution" }
     private var output: String { [detail?.detailText, detail?.text, item.detailText, item.text].compactMap { $0 }.first { !$0.isEmpty } ?? "No output." }
     var body: some View {

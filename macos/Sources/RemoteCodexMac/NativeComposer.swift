@@ -2,7 +2,7 @@ import SwiftUI
 
 /// SwiftUI owns the editable surface, selection, undo and accessibility.
 struct NativeComposer: View {
-    private var textSize = TextSizePreference()
+    var textSize = TextSizePreference()
     @Binding var text: String
     var code = false
     var readOnly = false
