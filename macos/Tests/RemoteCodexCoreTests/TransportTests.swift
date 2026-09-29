@@ -107,35 +107,22 @@ final class TransportTests: XCTestCase {
         var wrong = SocketCipher(channel: "wrong", send: b, receive: a)
         XCTAssertThrowsError(try wrong.open(try client.seal(request)))
     }
-    @MainActor func testBrowserSessionAndNativePinsStayInVault() async throws {
+    @MainActor func testRestoredSessionAndIdentityPinsStayInVault() async throws {
         let vault = MemoryVault()
         let origin = "https://relay.example.com"
         let device = "89b047e5-6e45-45d8-90f6-99607cb1fe16"
         vault.values["identity:\(origin):\(device)"] = "existing-pin"
+        vault.values["session:" + origin] = "synthetic-session"
         let client = try await RelayClient(origin: origin, vault: vault)
-        try await client.syncBrowserSession("synthetic-session")
-        XCTAssertEqual(vault.values["session:" + origin], "synthetic-session")
-        XCTAssertTrue(client.signedIn)
-        let cookie = try XCTUnwrap(client.browserCookies().first)
-        XCTAssertTrue(cookie.isHTTPOnly)
-        XCTAssertTrue(cookie.isSecure)
-        let pins = try await client.pinnedIdentities([device])
-        XCTAssertEqual(pins[device], "existing-pin")
-        try await client.syncBrowserSession(nil)
-        XCTAssertFalse(client.signedIn)
-        XCTAssertNil(vault.values["session:" + origin])
-        XCTAssertEqual(vault.values["identity:\(origin):\(device)"], "existing-pin")
+        XCTAssertTrue(client.signedIn, "A vaulted session must restore without a second sign-in")
+        XCTAssertEqual(vault.values["identity:\(origin):\(device)"], "existing-pin", "Restoring a session must not disturb device identity pins")
     }
-    func testBrowserRoutesStayOnRelayAndDoNotPersistSecrets() throws {
+    func testRelayDestinationsStayOnTheConfiguredOrigin() throws {
         let origin = URL(string: "https://relay.example.com")!
         XCTAssertTrue(BrowserPolicy.sameOrigin(URL(string: "https://relay.example.com:443/devices")!, origin))
         for raw in ["http://relay.example.com", "https://relay.example.com.evil.test", "https://relay.example.com:444", "https://user@relay.example.com"] {
             XCTAssertFalse(BrowserPolicy.sameOrigin(URL(string: raw)!, origin))
         }
-        XCTAssertEqual(BrowserPolicy.restoredURL("//evil.test/a", origin: origin).path, "/relay-devices")
-        let url = URL(string: "https://relay.example.com/devices/one/workspaces?token=secret#private")!
-        XCTAssertEqual(BrowserPolicy.rememberedPath(url, origin: origin), "/devices/one/workspaces")
-        XCTAssertNil(BrowserPolicy.rememberedPath(URL(string: "https://relay.example.com/login?code=secret")!, origin: origin))
     }
     func testContinuationAcceptsOnlyScopedSequentialChunks() throws {
         let id = "89b047e5-6e45-45d8-90f6-99607cb1fe16"

@@ -76,28 +76,6 @@ public final class RelayClient {
     private var keyRequests: [String: Task<(KeyDescriptor, Double), Error>] = [:]
     public var signedIn: Bool { token != nil }
     public var notificationScope: String { Data(SHA256.hash(data: Data((origin.absoluteString + ":" + (token ?? "")).utf8))).base64EncodedString() }
-    /// Called only with the relay's same-origin HttpOnly cookie from our isolated WebKit store.
-    public func syncBrowserSession(_ value: String?) async throws {
-        guard value != token else { return }
-        try await vault.write(value, for: "session:" + origin.absoluteString)
-        token = value
-        for cookie in session.configuration.httpCookieStorage?.cookies ?? [] { session.configuration.httpCookieStorage?.deleteCookie(cookie) }
-        if value == nil { keys.removeAll() }
-    }
-    public func pinnedIdentities(_ devices: [String]) async throws -> [String: String] {
-        var result: [String: String] = [:]
-        for device in devices {
-            if let pin = try await vault.read("identity:\(origin.absoluteString):\(device)") { result[device] = pin }
-        }
-        return result
-    }
-    public func browserCookies() -> [HTTPCookie] {
-        guard let token, let host = origin.host else { return [] }
-        var properties: [HTTPCookiePropertyKey: Any] = [.name: "remote_codex_relay_session", .value: token, .domain: host, .path: "/", HTTPCookiePropertyKey("HttpOnly"): "TRUE"]
-        if origin.scheme == "https" { properties[.secure] = "TRUE" }
-        return HTTPCookie(properties: properties).map { [$0] } ?? []
-    }
-
     public static func normalizedOrigin(_ text: String) throws -> URL {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var c = URLComponents(string: text.contains("://") ? text : "https://" + text),

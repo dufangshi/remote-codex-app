@@ -67,7 +67,9 @@ struct SlashToolboxView: View {
                         }
                         if rows.isEmpty && !loading { Text("No \(panel) configured.").foregroundStyle(Palette.muted).padding(10) }
                         if panel == "mcp" || panel == "hooks" {
-                            Button("Manage in Settings…") { close(); state.showingSettings = true }
+                            // Editing these is web-only; the native Settings sheet holds local
+                            // display preferences and cannot configure them.
+                            Button("Manage in browser…") { close(); state.openWeb() }
                         }
                     }
                 }
@@ -119,7 +121,7 @@ struct SlashToolboxView: View {
         let action = item["action"] ?? ""
         if action == "prompt" { state.draft += (item["command"] ?? "") + " "; close(); return }
         if action == "fast" { await setting(["fastMode": !fast]); if failure == nil { fast.toggle() }; return }
-        if action == "harness" { close(); state.showingSettings = true; return }
+        if action == "harness" { close(); state.openWeb(); return }
         loading = true; failure = nil; defer { loading = false }
         do {
             if action == "compact" { _ = try await request("/compact", method: "POST", body: [:]); close(); await state.refreshThread(); return }
