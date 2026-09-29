@@ -69,7 +69,10 @@ extension View {
     func glassBar() -> some View { modifier(GlassBar()) }
     /// Floating, rounded glass surface with a frosted top-edge highlight, for
     /// popovers, sheets and other chrome that visibly floats above content.
-    func glassPanel(cornerRadius: CGFloat = 16) -> some View { modifier(GlassPanel(cornerRadius: cornerRadius)) }
+    /// `clear` selects the lighter, more see-through material (the composer).
+    func glassPanel(cornerRadius: CGFloat = 16, clear: Bool = false) -> some View {
+        modifier(GlassPanel(cornerRadius: cornerRadius, clear: clear))
+    }
 }
 
 private struct GlassBar: ViewModifier {
@@ -91,18 +94,21 @@ private struct GlassBar: ViewModifier {
 private struct GlassPanel: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let cornerRadius: CGFloat
+    var clear = false
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: cornerRadius) }
-    private var highlight: LinearGradient { LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0)], startPoint: .top, endPoint: .bottom) }
+    private var highlight: LinearGradient {
+        LinearGradient(colors: [.white.opacity(clear ? 0.18 : 0.35), .white.opacity(0)], startPoint: .top, endPoint: .bottom)
+    }
     func body(content: Content) -> some View {
         Group { if reduceTransparency { content.background(Palette.panel, in: shape) } else { glassBackground(content) } }
             .overlay(shape.strokeBorder(reduceTransparency ? AnyShapeStyle(Palette.border) : AnyShapeStyle(highlight), lineWidth: 1))
     }
     @ViewBuilder private func glassBackground(_ content: Content) -> some View {
         #if compiler(>=6.2)
-        if #available(macOS 26, *) { content.glassEffect(.regular, in: shape) }
-        else { content.background(.regularMaterial, in: shape) }
+        if #available(macOS 26, *) { content.glassEffect(clear ? .clear : .regular, in: shape) }
+        else { content.background(clear ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.regularMaterial), in: shape) }
         #else
-        content.background(.regularMaterial, in: shape)
+        content.background(clear ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.regularMaterial), in: shape)
         #endif
     }
 }
@@ -138,48 +144,79 @@ struct SheetHeader: View {
     }
 }
 
-/// A selectable card row, used instead of raw AppKit radio buttons for a
-/// more deliberately-designed look matching the web app's option lists.
-struct SelectableRow: View {
+/// One bordered container holding flat rows separated by hairlines. Giving each
+/// row its own border instead reads as boxes-inside-boxes against a glass sheet.
+struct OptionGroup<Content: View>: View {
+    var cornerRadius: CGFloat = 10
+    @ViewBuilder let content: Content
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: cornerRadius) }
+    var body: some View {
+        VStack(spacing: 0) { content }
+            .background(Palette.surface.opacity(0.55))
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(Palette.border, lineWidth: 1))
+    }
+}
+
+/// Radio row for an OptionGroup. Flat by design - the group draws the border.
+struct OptionRow: View {
     let title: String
     var subtitle: String? = nil
     let selected: Bool
     let action: () -> Void
+    @State private var hovered = false
     var body: some View {
         Button(action: action) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Palette.accent : Palette.muted).font(.system(size: 16)).padding(.top, 1)
+                Circle().strokeBorder(selected ? Palette.accent : Palette.muted.opacity(0.55), lineWidth: 1.5)
+                    .frame(width: 15, height: 15)
+                    .overlay { if selected { Circle().fill(Palette.accent).frame(width: 7, height: 7) } }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.text)
+                    Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular)).foregroundStyle(Palette.text)
                     if let subtitle { Text(subtitle).font(.system(size: 11)).foregroundStyle(Palette.muted) }
                 }
                 Spacer(minLength: 0)
-            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                .background(selected ? Palette.accent.opacity(0.10) : Palette.surface, in: RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(selected ? Palette.accent.opacity(0.5) : Palette.border, lineWidth: 1))
-        }.buttonStyle(.plain)
+            }.padding(.horizontal, 12).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                .background(selected ? Palette.accent.opacity(0.09) : hovered ? Palette.surface.opacity(0.7) : .clear)
+        }.buttonStyle(.plain).onHover { hovered = $0 }
     }
 }
 
-/// A checkbox-style row for multi-select lists (e.g. picking transcript turns).
-struct SelectableCheckRow: View {
+/// Checkbox row for multi-select lists (e.g. picking transcript turns).
+struct CheckRow: View {
     let title: String
     var subtitle: String? = nil
     let checked: Bool
     let action: () -> Void
+    @State private var hovered = false
     var body: some View {
         Button(action: action) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: checked ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(checked ? Palette.accent : Palette.muted).font(.system(size: 15)).padding(.top, 1)
+                RoundedRectangle(cornerRadius: 3.5)
+                    .strokeBorder(checked ? Palette.accent : Palette.muted.opacity(0.55), lineWidth: 1.5)
+                    .background(checked ? Palette.accent.opacity(0.9) : .clear, in: RoundedRectangle(cornerRadius: 3.5))
+                    .frame(width: 14, height: 14)
+                    .overlay { if checked { Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)).foregroundStyle(.black) } }
+                    .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.text)
+                    Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.text)
                     if let subtitle { Text(subtitle).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1) }
                 }
                 Spacer(minLength: 0)
-            }.padding(.vertical, 6).padding(.horizontal, 8).contentShape(Rectangle())
-        }.buttonStyle(.plain)
+            }.padding(.horizontal, 12).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                .background(hovered ? Palette.surface.opacity(0.7) : .clear)
+        }.buttonStyle(.plain).onHover { hovered = $0 }
+    }
+}
+
+/// Section caption above an OptionGroup.
+struct SheetLabel: View {
+    let text: String
+    var body: some View {
+        Text(text.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(0.6)
+            .foregroundStyle(Palette.muted)
     }
 }
 
@@ -199,8 +236,8 @@ struct SheetCard<Content: View>: View {
     @ViewBuilder let content: Content
     var body: some View {
         VStack(alignment: .leading, spacing: 10) { content }
-            .padding(14).background(Palette.surface, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.border, lineWidth: 1))
+            .padding(14).background(Palette.surface.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.border, lineWidth: 1))
     }
 }
 

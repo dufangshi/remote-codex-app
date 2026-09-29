@@ -87,10 +87,7 @@ struct ConversationView: View {
                     }
                 }.scrollIndicators(.never)
             }
-            NativeComposer(text: $state.draft) { Task { await state.send() } }.frame(height: 82)
-                .overlay(alignment: .topLeading) {
-                    if state.draft.isEmpty { Text("Message your agent…").foregroundStyle(Palette.muted.opacity(0.65)).padding(.top, 6).padding(.leading, 5).allowsHitTesting(false) }
-                }
+            NativeComposer(text: $state.draft) { Task { await state.send() } }.frame(height: 64)
             HStack(spacing: 10) {
                 Button { state.showingThreadSettings = false; slashOpen.toggle() } label: {
                     SlashToolIcon().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)).frame(width: 14, height: 14)
@@ -121,7 +118,8 @@ struct ConversationView: View {
             }.overlay(alignment: .bottomTrailing) {
                 if state.showingThreadSettings { ThreadSettingsView().padding(.trailing, 48).padding(.bottom, 46) }
             }.zIndex(2)
-        }.padding(16).glassPanel(cornerRadius: 24)
+        }.padding(14).glassPanel(cornerRadius: 22, clear: true)
+            .frame(maxWidth: 720).frame(maxWidth: .infinity)
             .padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 8).zIndex(10)
             .background {
                 if slashOpen || state.showingThreadSettings {

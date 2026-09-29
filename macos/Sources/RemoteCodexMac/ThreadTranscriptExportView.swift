@@ -15,45 +15,53 @@ struct ThreadTranscriptExportView: View {
     private let limitChoices = [3, 10, 20, 0]
     private func limitLabel(_ value: Int) -> String { value == 0 ? "All" : "\(value)" }
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 14) {
             SheetHeader(title: "Download transcript", subtitle: "Save a readable copy of your conversation as HTML.", close: { dismiss() })
             if let failure { Text(failure).font(.system(size: 12)).foregroundStyle(.red) }
-            SheetCard {
-                SelectableRow(title: "Latest turns", selected: mode == "latest") { mode = "latest" }
+            SheetLabel(text: "Turns to include")
+            OptionGroup {
+                OptionRow(title: "Latest turns", selected: mode == "latest") { mode = "latest" }
                 if mode == "latest" {
                     HStack(spacing: 6) {
                         ForEach(limitChoices, id: \.self) { value in
                             Button(limitLabel(value)) { limitChoice = value }
                                 .buttonStyle(WorkbenchButton(selected: limitChoice == value)).frame(maxWidth: .infinity)
                         }
-                    }.padding(.leading, 26)
+                    }.padding(.leading, 37).padding(.trailing, 12).padding(.bottom, 10)
                 }
-                SelectableRow(title: "Choose turns", selected: mode == "custom") { mode = "custom" }
+                Divider().overlay(Palette.border)
+                OptionRow(title: "Choose turns", selected: mode == "custom") { mode = "custom" }
                 if mode == "custom" {
-                    if !loaded { ProgressView().controlSize(.small).frame(maxWidth: .infinity) }
+                    Divider().overlay(Palette.border)
+                    if !loaded { ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 12) }
                     else {
-                        HStack { Text("\(selected.count) selected").font(.system(size: 11)).foregroundStyle(Palette.muted); Spacer(); Button("Clear selection") { selected.removeAll() }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.accent) }
+                        HStack {
+                            Text("\(selected.count) selected").font(.system(size: 11)).foregroundStyle(Palette.muted)
+                            Spacer()
+                            Button("Clear selection") { selected.removeAll() }
+                                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.accent)
+                        }.padding(.horizontal, 12).padding(.vertical, 7)
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(spacing: 0) {
                                 ForEach(turns) { turn in
-                                    SelectableCheckRow(title: "Turn \(turn.turnNumber)", subtitle: turn.userPromptPreview?.isEmpty == false ? turn.userPromptPreview! : "No prompt text", checked: selected.contains(turn.turnId)) {
+                                    CheckRow(title: "Turn \(turn.turnNumber)", subtitle: turn.userPromptPreview?.isEmpty == false ? turn.userPromptPreview! : "No prompt text", checked: selected.contains(turn.turnId)) {
                                         if selected.contains(turn.turnId) { selected.remove(turn.turnId) } else { selected.insert(turn.turnId) }
                                     }
                                 }
                             }
-                        }.frame(maxHeight: 140).background(Palette.background, in: RoundedRectangle(cornerRadius: 8))
+                        }.frame(maxHeight: 148).scrollIndicators(.never)
                     }
                 }
-                Divider().overlay(Palette.border)
-                Toggle("Include token usage and price", isOn: $includeTokenAndPrice)
             }
+            Toggle("Include token usage and price", isOn: $includeTokenAndPrice)
+                .font(.system(size: 12)).padding(.horizontal, 2)
             Spacer(minLength: 0)
             Button { Task { await export() } } label: {
                 HStack { Image(systemName: "arrow.down.to.line"); Text(busy ? "Exporting…" : "Export HTML") }
                     .frame(maxWidth: .infinity).padding(.vertical, 2)
             }.buttonStyle(.borderedProminent).tint(Palette.accent).controlSize(.large)
                 .disabled(busy || (mode == "custom" && (!loaded || selected.isEmpty)))
-        }.padding(24).frame(width: 420, height: 480).glassBar()
+        }.padding(24).frame(width: 420, height: 500).glassBar()
             .task { await load() }
     }
     private func load() async {

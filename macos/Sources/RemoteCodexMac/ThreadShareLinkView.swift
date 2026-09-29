@@ -16,25 +16,34 @@ struct ThreadShareLinkView: View {
     @State private var failure: String?
     @State private var copiedID: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 14) {
             SheetHeader(title: "Share as link", subtitle: "Anyone with the link can read the selected prompts, images and final replies.", close: { dismiss() })
             if let failure { Text(failure).font(.system(size: 12)).foregroundStyle(.red) }
-            SheetCard {
-                Text("Turns to share").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted)
-                SelectableRow(title: "All current turns" + (loaded ? " (\(turns.count))" : ""), selected: scope == "all") { scope = "all" }
-                SelectableRow(title: "Choose turns", selected: scope == "selected") { scope = "selected" }
-                if !loaded { ProgressView().controlSize(.small).frame(maxWidth: .infinity) }
-                else if scope == "selected" {
-                    HStack { Text("\(selected.count) selected").font(.system(size: 11)).foregroundStyle(Palette.muted); Spacer(); Button("Clear selection") { selected.removeAll() }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.accent) }
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(turns) { turn in
-                                SelectableCheckRow(title: "Turn \(turn.turnNumber)", subtitle: turn.userPromptPreview?.isEmpty == false ? turn.userPromptPreview! : "No prompt text", checked: selected.contains(turn.turnId)) {
-                                    if selected.contains(turn.turnId) { selected.remove(turn.turnId) } else { selected.insert(turn.turnId) }
+            SheetLabel(text: "Turns to share")
+            OptionGroup {
+                OptionRow(title: "All current turns" + (loaded ? " (\(turns.count))" : ""), selected: scope == "all") { scope = "all" }
+                Divider().overlay(Palette.border)
+                OptionRow(title: "Choose turns", selected: scope == "selected") { scope = "selected" }
+                if scope == "selected" {
+                    Divider().overlay(Palette.border)
+                    if !loaded { ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 12) }
+                    else {
+                        HStack {
+                            Text("\(selected.count) selected").font(.system(size: 11)).foregroundStyle(Palette.muted)
+                            Spacer()
+                            Button("Clear selection") { selected.removeAll() }
+                                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Palette.accent)
+                        }.padding(.horizontal, 12).padding(.vertical, 7)
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ForEach(turns) { turn in
+                                    CheckRow(title: "Turn \(turn.turnNumber)", subtitle: turn.userPromptPreview?.isEmpty == false ? turn.userPromptPreview! : "No prompt text", checked: selected.contains(turn.turnId)) {
+                                        if selected.contains(turn.turnId) { selected.remove(turn.turnId) } else { selected.insert(turn.turnId) }
+                                    }
                                 }
                             }
-                        }
-                    }.frame(maxHeight: 150).background(Palette.background, in: RoundedRectangle(cornerRadius: 8))
+                        }.frame(maxHeight: 148).scrollIndicators(.never)
+                    }
                 }
             }
             Button { Task { await create() } } label: {
@@ -43,12 +52,12 @@ struct ThreadShareLinkView: View {
             }.buttonStyle(.borderedProminent).tint(Palette.accent).controlSize(.large)
                 .disabled(busy || !loaded || (scope == "selected" ? selected.isEmpty : turns.isEmpty))
             if copiedID != nil { Label("Read-only link copied", systemImage: "checkmark").font(.system(size: 12)).foregroundStyle(Palette.accent) }
-            Text("Shared links").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted)
+            SheetLabel(text: "Shared links")
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(links) { link in
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack {
+                            HStack(spacing: 8) {
                                 StatusBadge(text: link.live == true ? "Live" : "Snapshot", tint: link.live == true ? Palette.accent : Palette.muted)
                                 Text("\(link.turnCount) turns · " + timestamp(link.createdAt)).font(.system(size: 11)).foregroundStyle(Palette.muted)
                                 Spacer()
@@ -57,15 +66,15 @@ struct ThreadShareLinkView: View {
                             HStack(spacing: 8) {
                                 Text(url(for: link)).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                                     .padding(.horizontal, 8).padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Palette.background, in: RoundedRectangle(cornerRadius: 6))
+                                    .background(Palette.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                                 Button { copy(link) } label: { Image(systemName: copiedID == link.id ? "checkmark" : "doc.on.doc") }.buttonStyle(.plain).foregroundStyle(copiedID == link.id ? Palette.accent : Palette.muted)
                             }
-                        }.padding(10).background(Palette.surface, in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.border, lineWidth: 1))
+                        }.padding(10).background(Palette.surface.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Palette.border, lineWidth: 1))
                     }
                     if links.isEmpty { Text("No links shared yet.").font(.system(size: 12)).foregroundStyle(Palette.muted) }
                 }
-            }
+            }.scrollIndicators(.never)
         }.padding(24).frame(width: 460, height: 600).glassBar()
             .task { await loadTurns(); await loadLinks() }
     }
