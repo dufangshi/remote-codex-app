@@ -76,7 +76,7 @@ struct TraceToolView: View {
                     ScrollView([.horizontal, .vertical]) {
                         Text(output).font(.system(size: textSize.points(13), design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false).padding(12)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Palette.background)
-                }.padding(20).frame(width: 760, height: 520).background(Palette.panel)
+                }.padding(20).frame(width: 760, height: 520).glassBar()
                     .task(id: retry) {
                         guard detail == nil else { return }; loading = true; defer { loading = false }
                         do { detail = try await state.itemDetail(thread: thread, item: item.id); failure = nil }

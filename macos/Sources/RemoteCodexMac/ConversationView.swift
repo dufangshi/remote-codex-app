@@ -121,8 +121,7 @@ struct ConversationView: View {
             }.overlay(alignment: .bottomTrailing) {
                 if state.showingThreadSettings { ThreadSettingsView().padding(.trailing, 48).padding(.bottom, 46) }
             }.zIndex(2)
-        }.padding(16).background(Palette.panel, in: RoundedRectangle(cornerRadius: 24))
-            .overlay(RoundedRectangle(cornerRadius: 24).stroke(Palette.border, lineWidth: 1.5))
+        }.padding(16).glassPanel(cornerRadius: 24)
             .padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 8).zIndex(10)
             .background {
                 if slashOpen || state.showingThreadSettings {
@@ -320,7 +319,7 @@ struct NativeImage: View {
             VStack {
                 HStack { Spacer(); Button("Done") { preview = false }.keyboardShortcut(.cancelAction) }
                 if let image { Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity) }
-            }.padding(20).frame(width: 800, height: 600).background(Palette.background)
+            }.padding(20).frame(width: 800, height: 600).glassBar()
         }
     }
 }

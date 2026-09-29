@@ -197,7 +197,7 @@ struct PortalPages: View {
         }
     }
     private func fact(_ label: String, _ value: String) -> some View { VStack(alignment: .leading, spacing: 6) { Text(label).font(.caption).foregroundStyle(Palette.muted); Text(value).font(.system(size: 12, design: .monospaced)).textSelection(.enabled) }.frame(maxWidth: .infinity, alignment: .leading) }
-    private func simpleDialog<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View { VStack(alignment: .leading, spacing: 18) { Text(title).font(.headline); content(); if let error = state.error { Text(error).foregroundStyle(.red) }; Button("Close") { editing = nil; path = nil } }.padding(24).frame(width: 500).background(Palette.panel) }
+    private func simpleDialog<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View { VStack(alignment: .leading, spacing: 18) { Text(title).font(.headline); content(); if let error = state.error { Text(error).foregroundStyle(.red) }; Button("Close") { editing = nil; path = nil } }.padding(24).frame(width: 500).glassBar() }
     private func relayAction(_ path: String, method: String, body: [String: Any]? = nil) async {
         guard let api = state.client else { return }; busy = true; state.error = nil; defer { busy = false }
         do { let _: IgnoredReply = try await api.relay(path, method: method, body: body); await state.refreshPortal() } catch { state.error = error.localizedDescription }

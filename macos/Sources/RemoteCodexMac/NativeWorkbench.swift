@@ -70,7 +70,7 @@ struct NativeWorkbench: View {
             IconButton(title: "Files", icon: "folder", selected: state.contentMode == "files") { state.page = "conversation"; state.contentMode = "files" }
             Spacer()
             IconButton(title: "Settings", icon: "gearshape") { state.showingSettings = true }
-        }.padding(.bottom, 12).frame(width: 50).background(Palette.chrome)
+        }.padding(.bottom, 12).frame(width: 50).glassBar()
             .overlay(alignment: .trailing) { Palette.border.frame(width: 1).allowsHitTesting(false) }
     }
     private var topbar: some View {
@@ -102,7 +102,7 @@ struct NativeWorkbench: View {
                         if state.navigation?.notifications.isEmpty != false { Text("You're all caught up.").foregroundStyle(Palette.muted) }
                     }.padding(20).frame(width: 340)
                 }
-        }.padding(.horizontal, 12).frame(height: 48).background(Palette.chrome)
+        }.padding(.horizontal, 12).frame(height: 48).glassBar()
             .overlay(alignment: .bottom) { Palette.border.frame(height: 1) }
     }
     private var sidebar: some View {
@@ -143,7 +143,7 @@ struct NativeWorkbench: View {
                 }
             }.scrollIndicators(.never)
             Text("Your conversations, together.").font(.caption).foregroundStyle(Palette.muted).padding(.vertical, 8)
-        }.padding(.horizontal, 12).padding(.top, 14).background(Palette.chrome)
+        }.padding(.horizontal, 12).padding(.top, 14).glassBar()
     }
     private func sectionHeading(_ name: String, expanded: Binding<Bool>, count: Int?) -> some View {
         Button { expanded.wrappedValue.toggle() } label: {
@@ -232,7 +232,7 @@ struct NativeWorkbench: View {
             } label: { Image(systemName: "ellipsis").frame(width: 30, height: 32).contentShape(Rectangle()) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Thread actions")
             IconButton(title: "Toggle Explorer", icon: "sidebar.right") { state.contentMode = state.contentMode == "files" ? "chat" : "files" }
-        }.padding(.horizontal, 12).frame(height: 46).background(Palette.chrome)
+        }.padding(.horizontal, 12).frame(height: 46).glassBar()
     }
     private var selectionPage: some View {
         ScrollView {

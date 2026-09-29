@@ -118,7 +118,7 @@ struct ThreadSettingsView: View {
                             Text("Higher effort can consume usage limits faster.").font(.system(size: 12)).foregroundStyle(Palette.muted).padding(12)
                         }
                     }
-                }.padding(6).frame(width: section == "model" ? 208 : 176).composerMenuSurface()
+                }.padding(6).frame(width: section == "model" ? 208 : 176).glassPanel().shadow(color: .black.opacity(0.22), radius: 16, y: 8)
             }
             VStack(spacing: 2) {
                 Button { section = section == "model" ? nil : "model" } label: {
@@ -129,7 +129,7 @@ struct ThreadSettingsView: View {
                 }.buttonStyle(MenuRowStyle()).disabled(choices.isEmpty)
                 if state.busy { ProgressView().controlSize(.small) }
                 if let error = state.error { Text(error).font(.caption).foregroundStyle(.red).padding(8) }
-            }.padding(6).frame(width: 216).composerMenuSurface()
+            }.padding(6).frame(width: 216).glassPanel().shadow(color: .black.opacity(0.22), radius: 16, y: 8)
         }.fixedSize(horizontal: false, vertical: true).disabled(state.busy || state.active)
     }
     private func menuLabel(_ title: String, selected: Bool) -> some View {

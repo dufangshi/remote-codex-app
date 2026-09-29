@@ -64,15 +64,45 @@ extension View {
             .overlay(RoundedRectangle(cornerRadius: radius).stroke(Palette.border))
             .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
     }
-    @ViewBuilder func controlGlass() -> some View {
+    /// Edge-to-edge translucent chrome for full-bleed bars (rail, topbar, sidebar)
+    /// that have no visible rounded edge to frame.
+    func glassBar() -> some View { modifier(GlassBar()) }
+    /// Floating, rounded glass surface with a frosted top-edge highlight, for
+    /// popovers, sheets and other chrome that visibly floats above content.
+    func glassPanel(cornerRadius: CGFloat = 16) -> some View { modifier(GlassPanel(cornerRadius: cornerRadius)) }
+}
+
+private struct GlassBar: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    func body(content: Content) -> some View {
+        if reduceTransparency { content.background(Palette.chrome) }
+        else { glassBackground(content) }
+    }
+    @ViewBuilder private func glassBackground(_ content: Content) -> some View {
         #if compiler(>=6.2)
-        if #available(macOS 26, *) {
-            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        } else {
-            self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        }
+        if #available(macOS 26, *) { content.glassEffect(.regular, in: Rectangle()) }
+        else { content.background(.regularMaterial) }
         #else
-        self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        content.background(.regularMaterial)
+        #endif
+    }
+}
+
+private struct GlassPanel: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    let cornerRadius: CGFloat
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: cornerRadius) }
+    private var highlight: LinearGradient { LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0)], startPoint: .top, endPoint: .bottom) }
+    func body(content: Content) -> some View {
+        Group { if reduceTransparency { content.background(Palette.panel, in: shape) } else { glassBackground(content) } }
+            .overlay(shape.strokeBorder(reduceTransparency ? AnyShapeStyle(Palette.border) : AnyShapeStyle(highlight), lineWidth: 1))
+    }
+    @ViewBuilder private func glassBackground(_ content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26, *) { content.glassEffect(.regular, in: shape) }
+        else { content.background(.regularMaterial, in: shape) }
+        #else
+        content.background(.regularMaterial, in: shape)
         #endif
     }
 }

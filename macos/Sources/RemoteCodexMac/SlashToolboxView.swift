@@ -72,7 +72,8 @@ struct SlashToolboxView: View {
                     }
                 }
             }.scrollIndicators(.never).frame(height: panel == "root" ? min(360, CGFloat(max(1, items.filter { available($0["action"] ?? "") }.count)) * 38) : 360)
-        }.padding(8).frame(width: 288).fixedSize(horizontal: false, vertical: true).composerMenuSurface(radius: 16).buttonStyle(WorkbenchButton())
+        }.padding(8).frame(width: 288).fixedSize(horizontal: false, vertical: true)
+            .glassPanel(cornerRadius: 16).shadow(color: .black.opacity(0.22), radius: 16, y: 8).buttonStyle(WorkbenchButton())
             .task { await loadRoot() }
     }
     private func row(_ title: String, status: String, action: @escaping () -> Void) -> some View {

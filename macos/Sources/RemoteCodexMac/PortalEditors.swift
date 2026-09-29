@@ -26,7 +26,7 @@ struct AccessEditor: View {
             if grant != nil { TextField("Expires at (ISO 8601, blank for no expiry)", text: $expires) }
             if let failure { Text(failure).foregroundStyle(.red) }
             HStack { Button("Cancel") { dismiss() }; Spacer(); Button(device == nil ? "Save permissions" : "Share device") { Task { await save() } }.disabled(busy || (device != nil && target.isEmpty)) }
-        }.textFieldStyle(.roundedBorder).padding(28).frame(width: 480).background(Palette.panel)
+        }.textFieldStyle(.roundedBorder).padding(28).frame(width: 480).glassBar()
             .onAppear { if let grant { label = grant.label ?? ""; threadAccess = grant.threadAccess ?? "read"; workspaceAccess = grant.workspaceAccess ?? "none"; createThreads = grant.canCreateThreads ?? false; expires = grant.expiresAt ?? "" } }
     }
     private func save() async {
@@ -69,7 +69,7 @@ struct RotateTokenView: View {
                 Button("Replace token", role: .destructive) { Task { await rotate() } }.disabled(busy || (!verified && secret.isEmpty))
             }
             if let failure { Text(failure).foregroundStyle(.red) }; Button("Close") { secret = ""; result = nil; dismiss() }
-        }.padding(28).frame(width: 480).background(Palette.panel).task {
+        }.padding(28).frame(width: 480).glassBar().task {
             struct Security: Decodable { let authenticatorEnabled: Bool; let recentlyVerified: Bool }
             do { if let api = state.client { let value: Security = try await api.relay("/relay/account/security"); factor = value.authenticatorEnabled; verified = value.recentlyVerified } } catch { failure = error.localizedDescription }
         }
@@ -113,7 +113,7 @@ struct ImportSessionView: View {
             TextField("Session ID", text: $session).textFieldStyle(.roundedBorder)
             if let failure { Text(failure).foregroundStyle(.red) }
             HStack { Button("Cancel") { dismiss() }; Spacer(); Button("Import session") { Task { await importSession() } }.disabled(session.isEmpty || busy) }
-        }.padding(24).frame(width: 560).background(Palette.panel)
+        }.padding(24).frame(width: 560).glassBar()
             .task {
                 do { if let api = state.client, let device = state.deviceID { backends = try await api.device(device, "/api/agent-runtimes"); agents = try await api.device(device, "/api/agent-runtimes/acp/agents"); agent = agents.first?.id ?? "" } } catch { failure = error.localizedDescription }
             }.task(id: provider + agent) { await load() }
