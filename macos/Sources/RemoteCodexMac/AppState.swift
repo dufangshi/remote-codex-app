@@ -66,10 +66,13 @@ final class AppState: ObservableObject {
     @Published var deviceLoading = false
     @Published var navigation: WorkbenchSnapshot?
     @Published var page = "conversation"
+    @Published var portal: Portal?
     @Published var showingTools = false
     @Published var showingShare = false
     @Published var pinnedThreads = Set(UserDefaults.standard.stringArray(forKey: "native-pinned-threads") ?? [])
     @Published var showingThreadSettings = false
+    @Published var notificationStatus = "Checking macOS notifications…"
+    let systemNotifications = SystemNotifications()
     @Published var threadModels: [ModelOption] = []
     private(set) var client: RelayClient?
     var fileSessions: [String: WorkspaceFiles] = [:]
@@ -123,6 +126,8 @@ final class AppState: ObservableObject {
         let portal: Portal = try await api.relay("/relay/portal")
         guard client === api else { return }
         devices = portal.allDevices; authenticated = true; challenge = false
+        self.portal = portal
+        systemNotifications.start(state: self, client: api)
         await refreshNavigation()
         // One-time route migration from the 0.3 web workspace. Only public IDs.
         let migration = "native-layout-v4:" + relay
@@ -145,6 +150,7 @@ final class AppState: ObservableObject {
     func refreshPortal() async { await perform { if let client { try await loadPortal(client) } } }
     func signOut() async {
         guard !hasUnsavedFiles else { error = "Save or close your modified file tabs before signing out."; return }
+        systemNotifications.stop()
         if let client { await perform { try await client.logout() } }
         client = nil; authenticated = false; challenge = false
         devices = []; deviceID = nil; workspaces = []; workspaceID = nil
@@ -199,6 +205,8 @@ final class AppState: ObservableObject {
             mergeHistory(value.turns)
             detail = value; lastRefresh = Date(); threadError = nil
             if let index = threads.firstIndex(where: { $0.id == thread }) { threads[index] = value.thread }
+            else { threads.append(value.thread) }
+            if workspaceID != value.thread.workspaceId { workspaceID = value.thread.workspaceId }
         } catch {
             if generation == selectionGeneration, client === api, device == deviceID, thread == threadID, !Task.isCancelled { threadError = error.localizedDescription }
         }
@@ -256,13 +264,14 @@ final class AppState: ObservableObject {
             threads.insert(created, at: 0); threadID = created.id; showingNewThread = false
         }
     }
-    func createWorkspace() async {
+    func createWorkspace(input: [String: Any]? = nil) async {
         guard let api = client, let device = deviceID else { return }
         busy = true; defer { busy = false }
         await perform {
-            let created: Workspace = try await api.device(device, "/api/workspaces", method: "POST", body: ["absPath": workspacePath, "label": workspaceLabel])
+            let created: Workspace = try await api.device(device, "/api/workspaces", method: "POST", body: input ?? ["absPath": workspacePath, "label": workspaceLabel])
             guard device == deviceID else { return }
             workspaces.append(created); workspaceID = created.id; showingNewWorkspace = false
+            page = "conversation"; threadID = nil
             workspacePath = ""; workspaceLabel = ""
         }
     }

@@ -32,6 +32,7 @@ extension AppState {
     }
     func selectReference(_ device: String, _ thread: String) {
         guard UUID(uuidString: device) != nil, UUID(uuidString: thread) != nil else { return }
+        UserDefaults.standard.set(thread, forKey: "native-thread:" + relay + "/" + device)
         page = "conversation"
         if device == deviceID {
             if let row = threads.first(where: { $0.id == thread }) { workspaceID = row.workspaceId }

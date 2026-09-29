@@ -63,6 +63,10 @@ struct ConversationView: View {
                 if state.threadID != nil { Button("Retry") { Task { await state.refreshThread() } }.padding() }
             }
         }.background(Palette.background).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onExitCommand { slashOpen = false; state.showingThreadSettings = false }
+            .onChange(of: state.showingSettings) { _, open in
+                if open { slashOpen = false; state.showingThreadSettings = false }
+            }
     }
     private var matching: [Turn] {
         let q = state.conversationQuery.trimmingCharacters(in: .whitespaces)
@@ -88,19 +92,19 @@ struct ConversationView: View {
                     if state.draft.isEmpty { Text("Message your agent…").foregroundStyle(Palette.muted.opacity(0.65)).padding(.top, 6).padding(.leading, 5).allowsHitTesting(false) }
                 }
             HStack(spacing: 10) {
-                Button { slashOpen.toggle() } label: { Text("/").font(.system(size: 21, weight: .medium)).frame(width: 32, height: 32).contentShape(Rectangle()) }
-                    .buttonStyle(WorkbenchButton()).accessibilityLabel("Open slash toolbox")
-                    .popover(isPresented: $slashOpen, arrowEdge: .top) { SlashToolboxView(close: { slashOpen = false }) }
+                Button { state.showingThreadSettings = false; slashOpen.toggle() } label: {
+                    SlashToolIcon().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)).frame(width: 14, height: 14)
+                        .frame(width: 32, height: 32).contentShape(Circle())
+                }.buttonStyle(.plain).foregroundStyle(Palette.muted).accessibilityLabel("Open slash toolbox")
                 IconButton(title: "Attach images", icon: "plus") { state.addImages() }
                 Spacer(minLength: 4)
-                Button { Task { await state.prepareThreadSettings() } } label: {
+                Button { slashOpen = false; if state.showingThreadSettings { state.showingThreadSettings = false } else { Task { await state.prepareThreadSettings() } } } label: {
                     HStack(spacing: 5) {
                         Text(state.detail?.thread.model ?? "Model").lineLimit(1).truncationMode(.middle)
                         Text("· " + (state.detail?.thread.reasoningEffort ?? "Auto")).fixedSize()
                         Image(systemName: "chevron.down").font(.caption2)
                     }.font(.system(size: 12)).foregroundStyle(Palette.muted)
                 }.buttonStyle(.plain).disabled(state.active)
-                    .popover(isPresented: $state.showingThreadSettings, arrowEdge: .top) { ThreadSettingsView() }
                 if state.active {
                     IconButton(title: "Stop Current Turn", icon: "stop.fill") { Task { await state.interrupt() } }
                 }
@@ -112,19 +116,31 @@ struct ConversationView: View {
                 }.buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command)
                     .disabled(state.sending || (state.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.images.isEmpty))
                     .accessibilityIdentifier("sendMessage").accessibilityLabel(state.active ? "Steer" : "Send Prompt")
-            }
+            }.overlay(alignment: .bottomLeading) {
+                if slashOpen { SlashToolboxView(close: { slashOpen = false }).padding(.bottom, 46) }
+            }.overlay(alignment: .bottomTrailing) {
+                if state.showingThreadSettings { ThreadSettingsView().padding(.trailing, 48).padding(.bottom, 46) }
+            }.zIndex(2)
         }.padding(16).background(Palette.panel, in: RoundedRectangle(cornerRadius: 24))
             .overlay(RoundedRectangle(cornerRadius: 24).stroke(Palette.border, lineWidth: 1.5))
-            .padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 8)
+            .padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 8).zIndex(10)
+            .background {
+                if slashOpen || state.showingThreadSettings {
+                    Color.black.opacity(0.001).frame(width: 10000, height: 10000)
+                        .onTapGesture { slashOpen = false; state.showingThreadSettings = false }
+                }
+            }
     }
 }
 
 private struct NativeTurnView: View {
+    private var textSize = TextSizePreference()
     @EnvironmentObject var state: AppState
     let turn: Turn
     let thread: String
     @State private var toolsOpen = false
     @AppStorage("native-auto-collapse") private var autoCollapse = true
+    @AppStorage("native-reasoning-summaries") private var reasoningSummaries = false
     @State private var usageOpen = false
     @State private var forkConfirm = false
     @State private var complete: Turn?
@@ -133,19 +149,12 @@ private struct NativeTurnView: View {
     @State private var detailRevision = 0
     private var entries: [HistoryItem] {
         guard let complete else { return turn.items }
-        let updates = Dictionary(turn.items.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
-        let ids = Set(complete.items.map(\.id))
-        return complete.items.map { updates[$0.id] ?? $0 } + turn.items.filter { !ids.contains($0.id) }
+        return TimelineProjection.merge(detail: complete.items, summary: turn.items)
     }
     private var finalMessage: HistoryItem? { entries.last { ["agentMessage", "assistantMessage", "assistant"].contains($0.kind) && !$0.text.isEmpty } }
-    private var tools: [HistoryItem] { entries.filter { !["userMessage", "user"].contains($0.kind) && $0.id != finalMessage?.id } }
+    private var tools: [HistoryItem] { TimelineProjection.visible(entries).filter { !["userMessage", "user"].contains($0.kind) && $0.id != finalMessage?.id } }
     private var groups: [[HistoryItem]] {
-        var result: [[HistoryItem]] = []
-        for item in tools {
-            if item.kind == "commandExecution", result.last?.last?.kind == "commandExecution" { result[result.count - 1].append(item) }
-            else { result.append([item]) }
-        }
-        return result
+        TimelineProjection.groups(tools.filter { reasoningSummaries || $0.kind != "reasoning" })
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -163,7 +172,7 @@ private struct NativeTurnView: View {
                         Text(loading ? "Loading complete history…" : durationLabel)
                     }
                 }.buttonStyle(.plain).contentShape(Rectangle()).accessibilityLabel("Expand turn activity")
-                if let count = turn.deferredItemCount ?? Optional(tools.count), count > 0 { Text("\(count) steps") }
+                if let count = complete == nil ? turn.deferredItemCount ?? Optional(tools.count) : tools.count, count > 0 { Text("\(count) steps") }
                 if let model = turn.model { Text(model).lineLimit(1).truncationMode(.middle) }
                 if let effort = turn.reasoningEffort { Text("· " + effort).fixedSize() }
                 Spacer(minLength: 0)
@@ -183,7 +192,7 @@ private struct NativeTurnView: View {
                     Button("Copy turn") { copy(turn.items.map(\.text).joined(separator: "\n\n")) }
                     Button("Fork from this turn…") { forkConfirm = true }
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            }.font(.system(size: 11)).foregroundStyle(Palette.muted)
+            }.font(.system(size: textSize.points(11))).foregroundStyle(Palette.muted)
             if toolsOpen {
                 if let failure { InlineError(message: failure) { self.failure = nil }; Button("Retry activity") { detailRevision += 1 } }
                 VStack(alignment: .leading, spacing: 18) {
@@ -191,19 +200,20 @@ private struct NativeTurnView: View {
                         HStack(alignment: .top, spacing: 14) {
                             Circle().fill(Palette.accent.opacity(0.7)).frame(width: 6, height: 6).padding(.top, 7)
                             VStack(alignment: .leading, spacing: 8) {
-                                if group.count > 1 { Label("Ran \(group.count) commands", systemImage: "terminal").font(.callout).foregroundStyle(Palette.muted) }
-                                ForEach(Array(group.enumerated()), id: \.element.id) { index, entry in
-                                    HStack(alignment: .top, spacing: 10) {
-                                        if group.count > 1 { Text(String(format: "%02d", index + 1)).font(.caption.monospaced()).foregroundStyle(Palette.muted).padding(.top, 14) }
-                                        MessageView(item: entry, threadID: thread).frame(maxWidth: .infinity, alignment: .leading)
-                                    }
+                                if group.count > 1 { TraceGroupView(items: group, thread: thread) }
+                                else if let entry = group.first {
+                                    if let created = entry.createdAt { TraceTimestamp(value: created, start: turn.startedAt) }
+                                    MessageView(item: entry, threadID: thread).frame(maxWidth: .infinity, alignment: .leading)
                                 }
                             }
                         }
                     }
-                }.padding(.leading, 14).overlay(alignment: .leading) { Palette.border.frame(width: 1).allowsHitTesting(false) }
+                }.padding(.leading, 14).overlay(alignment: .leading) { Palette.border.frame(width: 1).offset(x: 17).allowsHitTesting(false) }
             }
-            if let finalMessage { MessageView(item: finalMessage, threadID: thread) }
+            if let finalMessage {
+                Text(timestamp(finalMessage.createdAt ?? turn.completedAt)).font(.system(size: textSize.points(11))).foregroundStyle(Palette.muted)
+                MessageView(item: finalMessage, threadID: thread)
+            }
             if let error = turn.error { Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).textSelection(.enabled) }
         }.onAppear { toolsOpen = !autoCollapse }
         .task(id: "\(toolsOpen)/\(turn.status)/\(turn.items.last?.text.count ?? 0)/\(detailRevision)") {
@@ -230,12 +240,8 @@ struct MessageView: View {
     @EnvironmentObject var state: AppState
     let item: HistoryItem
     let threadID: String
-    @State private var expanded = false
-    @State private var fetched: HistoryItem?
-    @State private var failure: String?
-    private var detailText: String { [fetched?.detailText, fetched?.text, item.detailText, item.text].compactMap { $0 }.first { !$0.isEmpty } ?? "No output." }
     private var isUser: Bool { ["userMessage", "user"].contains(item.kind) }
-    private var message: Bool { ["userMessage", "user", "agentMessage", "assistantMessage", "assistant"].contains(item.kind) }
+    private var message: Bool { ["userMessage", "user", "agentMessage", "assistantMessage", "assistant", "reasoning"].contains(item.kind) }
     var body: some View {
         if message {
             VStack(alignment: .leading, spacing: 12) {
@@ -254,30 +260,13 @@ struct MessageView: View {
         } else if item.kind == "image", let path = item.assetPath ?? item.detailText {
             NativeImage(path: path, threadID: threadID)
         } else {
-            DisclosureGroup(isExpanded: $expanded) {
-                if item.kind == "reasoning" || item.kind == "plan" {
-                    MarkdownContent(text: detailText).padding(.top, 10)
-                } else {
-                    ScrollView(.horizontal) { Text(detailText).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false).padding(12) }
-                        .scrollIndicators(.never).background(Palette.panel, in: RoundedRectangle(cornerRadius: 8))
-                }
-                if let failure { Text(failure).foregroundStyle(.red).font(.caption) }
-            } label: {
-                Label(item.previewText ?? item.text.components(separatedBy: .newlines).first ?? item.kind,
-                      systemImage: item.kind.lowercased().contains("reason") ? "brain" : "terminal")
-                    .font(.system(size: 12)).lineLimit(2).foregroundStyle(Palette.muted)
-            }.padding(12).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
-                .task(id: expanded) {
-                    if expanded, fetched == nil, item.hasDeferredDetail == true || ["commandExecution", "fileChange"].contains(item.kind) {
-                        do { fetched = try await state.itemDetail(thread: threadID, item: item.id) }
-                        catch { if !Task.isCancelled { failure = error.localizedDescription } }
-                    }
-                }
+            TraceToolView(item: item, thread: threadID)
         }
     }
 }
 
 private struct PagedMessageText: View {
+    private var textSize = TextSizePreference()
     let text: String
     @State private var limit = 6000
     private var chunks: [String] {
@@ -292,7 +281,7 @@ private struct PagedMessageText: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(chunks.enumerated()), id: \.offset) { _, part in
-                Text(part).font(.system(size: 15)).lineSpacing(5).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(part).font(.system(size: textSize.points(15))).lineSpacing(5).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
             if text.count > limit { Button("Show more · \(text.count - limit) characters remaining") { limit += 6000 }.buttonStyle(WorkbenchButton()).padding(.top, 8) }
         }
@@ -327,6 +316,7 @@ struct NativeImage: View {
 }
 
 struct MarkdownContent: View {
+    private var textSize = TextSizePreference()
     @EnvironmentObject var state: AppState
     let text: String
     var document: String? = nil
@@ -337,7 +327,7 @@ struct MarkdownContent: View {
                 render(block)
             }
             if text.count > characterLimit { Button("Show more (\(text.count - characterLimit) characters remaining)") { characterLimit += 120_000 } }
-        }.font(.system(size: 15)).foregroundStyle(Palette.text).lineSpacing(5)
+        }.font(.system(size: textSize.points(15))).foregroundStyle(Palette.text).lineSpacing(5)
             .frame(maxWidth: .infinity, alignment: .leading)
             .environment(\.openURL, OpenURLAction { url in state.openRemoteLink(url, document: document); return .handled })
     }
@@ -345,7 +335,7 @@ struct MarkdownContent: View {
         switch block {
         case .paragraph(let value): inline(value)
         case .heading(let level, let value):
-            inline(value).font(.system(size: level == 1 ? 26 : level == 2 ? 22 : 18, weight: .semibold)).padding(.top, 6)
+            inline(value).font(.system(size: textSize.points(level == 1 ? 26 : level == 2 ? 22 : 18), weight: .semibold)).padding(.top, 6)
         case .list(let marker, let value):
             HStack(alignment: .top, spacing: 12) { Text(marker).frame(minWidth: 18); inline(value) }.padding(.leading, 12)
         case .quote(let value):
@@ -356,7 +346,7 @@ struct MarkdownContent: View {
                 HStack { Text(language.isEmpty ? "Code" : language).font(.caption); Spacer(); Button { copy(code) } label: { Image(systemName: "doc.on.doc") }.buttonStyle(.plain).help("Copy code") }
                     .foregroundStyle(Palette.muted).padding(12).background(Palette.surface)
                 ScrollView(.horizontal) {
-                    Text(code).font(.system(size: 13, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false).padding(14)
+                    Text(code).font(.system(size: textSize.points(13), design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false).padding(14)
                 }.scrollIndicators(.never)
             }.background(Palette.panel, in: RoundedRectangle(cornerRadius: 10)).clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.border))
@@ -411,10 +401,10 @@ private struct NativeRequestView: View {
     }
 }
 
-private func copy(_ text: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
-private func date(_ value: String?) -> Date? {
+func copy(_ text: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+func date(_ value: String?) -> Date? {
     guard let value else { return nil }; let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return f.date(from: value) ?? ISO8601DateFormatter().date(from: value)
 }
-private func timestamp(_ value: String?) -> String { date(value)?.formatted(date: .abbreviated, time: .shortened) ?? "" }
+func timestamp(_ value: String?) -> String { date(value)?.formatted(date: .abbreviated, time: .shortened) ?? "" }
 private func short(_ n: Int) -> String { n >= 1_000_000 ? String(format: "%.1fm", Double(n) / 1_000_000) : n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)" }

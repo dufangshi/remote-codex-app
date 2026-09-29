@@ -19,7 +19,8 @@ struct RemoteCodexApp: App {
             }.environmentObject(state).frame(minWidth: 900, minHeight: 620)
                 .tint(Palette.accent).foregroundStyle(Palette.text)
                 .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
-                .task { appDelegate.state = state; await state.restore() }
+                .task { appDelegate.state = state; await state.restore(); appDelegate.restoreNotification() }
+                .onChange(of: state.authenticated) { _, authenticated in if authenticated { appDelegate.restoreNotification() } }
         }
         .defaultSize(width: 1260, height: 820)
         .commands {
@@ -84,53 +85,54 @@ struct SignInView: View {
 
 struct ThreadSettingsView: View {
     @EnvironmentObject var state: AppState
-    @State private var model = ""
-    @State private var effort = ""
-    @State private var search = ""
+    @State private var section: String?
+    private var model: String { state.detail?.thread.model ?? "" }
+    private var effort: String { state.detail?.thread.reasoningEffort ?? "auto" }
+    private var choices: [ReasoningOption] { state.threadModels.first { $0.model == model }?.supportedReasoningEfforts ?? [] }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack { Text("Model").font(.headline); Spacer(); IconButton(title: "Close model picker", icon: "xmark") { state.showingThreadSettings = false } }
-            TextField("Search models", text: $search).textFieldStyle(.plain).padding(10).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
-            ScrollView {
-                LazyVStack(spacing: 3) {
-                    ForEach(state.threadModels.filter { search.isEmpty || $0.displayName.localizedCaseInsensitiveContains(search) || $0.model.localizedCaseInsensitiveContains(search) }) { choice in
-                        Button {
-                            model = choice.model
-                            if !choice.supportedReasoningEfforts.contains(where: { $0.reasoningEffort == effort }) { effort = "" }
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) { Text(choice.displayName); Text(choice.model).font(.caption).foregroundStyle(Palette.muted) }
-                                Spacer(); if model == choice.model { Image(systemName: "checkmark").foregroundStyle(Palette.accent) }
-                            }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(model == choice.model ? Palette.selected : .clear, in: RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+        HStack(alignment: .bottom, spacing: 8) {
+            if let section {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(section == "model" ? "Model" : "Effort").font(.system(size: 12)).foregroundStyle(Palette.muted).padding(.horizontal, 12).padding(.vertical, 6)
+                    if section == "model" {
+                        ScrollView {
+                            VStack(spacing: 2) {
+                                ForEach(state.threadModels) { choice in
+                                    Button {
+                                        let next = choice.supportedReasoningEfforts.contains { $0.reasoningEffort == effort } ? effort : (choice.defaultReasoningEffort ?? "auto")
+                                        Task { await state.saveThreadSettings(model: choice.model, effort: next) }
+                                    } label: { menuLabel(choice.displayName, selected: model == choice.model) }
+                                        .buttonStyle(MenuRowStyle(selected: model == choice.model))
+                                }
+                            }
+                        }.scrollIndicators(.never).frame(height: min(288, CGFloat(state.threadModels.count) * 36))
+                        if state.threadModels.isEmpty { ProgressView().padding(12) }
+                    } else {
+                        ForEach(choices) { entry in
+                            Button { Task { await state.saveThreadSettings(model: model, effort: entry.reasoningEffort) } } label: {
+                                menuLabel(entry.reasoningEffort.capitalized, selected: effort == entry.reasoningEffort)
+                            }.buttonStyle(MenuRowStyle(selected: effort == entry.reasoningEffort))
+                        }
+                        if choices.contains(where: { $0.reasoningEffort == "ultra" }) {
+                            Text("Higher effort can consume usage limits faster.").font(.system(size: 12)).foregroundStyle(Palette.muted).padding(12)
+                        }
                     }
-                    if state.threadModels.isEmpty { ProgressView("Loading available models…").padding() }
-                }
-            }.scrollIndicators(.never).frame(height: 220)
-            Divider()
-            Text("Reasoning effort").font(.caption).foregroundStyle(Palette.muted)
-            ScrollView(.horizontal) {
-                HStack(spacing: 4) {
-                    effortButton("Auto", value: "")
-                    ForEach(state.threadModels.first(where: { $0.model == model })?.supportedReasoningEfforts ?? []) { effortButton($0.reasoningEffort.capitalized, value: $0.reasoningEffort) }
-                }
-            }.scrollIndicators(.never)
-            if let error = state.error { Text(error).font(.caption).foregroundStyle(.red) }
-            HStack {
-                Text(state.active ? "Available when this turn finishes." : "Applies to this conversation").font(.caption).foregroundStyle(Palette.muted)
-                Spacer()
-                Button("Apply") { Task { await state.saveThreadSettings(model: model, effort: effort) } }.buttonStyle(WorkbenchButton(selected: true)).disabled(state.busy || model.isEmpty || state.active)
+                }.padding(6).frame(width: section == "model" ? 208 : 176).composerMenuSurface()
             }
-        }.padding(16).frame(width: 370).background(Palette.panel)
-            .onAppear {
-                model = state.detail?.thread.model ?? ""
-                let current = state.detail?.thread.reasoningEffort ?? ""
-                effort = current == "auto" ? "" : current
-            }
+            VStack(spacing: 2) {
+                Button { section = section == "model" ? nil : "model" } label: {
+                    HStack { Text("Model"); Spacer(); Text(state.threadModels.first { $0.model == model }?.displayName ?? model).lineLimit(1).foregroundStyle(Palette.muted); Image(systemName: "chevron.right").font(.system(size: 11)) }
+                }.buttonStyle(MenuRowStyle())
+                Button { section = section == "effort" ? nil : "effort" } label: {
+                    HStack { Text("Effort"); Spacer(); Text(effort.capitalized).foregroundStyle(Palette.muted); Image(systemName: "chevron.right").font(.system(size: 11)) }
+                }.buttonStyle(MenuRowStyle()).disabled(choices.isEmpty)
+                if state.busy { ProgressView().controlSize(.small) }
+                if let error = state.error { Text(error).font(.caption).foregroundStyle(.red).padding(8) }
+            }.padding(6).frame(width: 216).composerMenuSurface()
+        }.fixedSize(horizontal: false, vertical: true).disabled(state.busy || state.active)
     }
-    private func effortButton(_ title: String, value: String) -> some View {
-        Button(title) { effort = value }.buttonStyle(WorkbenchButton(selected: effort == value))
-            .background(effort == value ? Palette.selected : Palette.surface, in: RoundedRectangle(cornerRadius: 7))
+    private func menuLabel(_ title: String, selected: Bool) -> some View {
+        HStack { Text(title).lineLimit(1); Spacer(); if selected { Image(systemName: "checkmark").font(.system(size: 12)) } }
     }
 }
 
@@ -174,19 +176,31 @@ struct NewThreadView: View {
 
 struct NewWorkspaceView: View {
     @EnvironmentObject var state: AppState
+    @State private var mode = "path"
+    @State private var devHome = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Add a remote workspace").font(.title2.weight(.semibold))
-            Text("Use an existing absolute directory on \(state.deviceName), not on this Mac.").foregroundStyle(.secondary)
-            TextField("Remote path", text: $state.workspacePath)
-            TextField("Workspace name", text: $state.workspaceLabel)
+            Text("Choose a folder, existing path, or Git repository on \(state.deviceName).").foregroundStyle(.secondary)
+            Picker("Source", selection: $mode) { Text("New folder").tag("folder"); Text("Existing path").tag("path"); Text("Git repository").tag("git") }.pickerStyle(.segmented)
+            if mode == "folder" { Text("Create under \(devHome)").font(.caption).foregroundStyle(.secondary) }
+            TextField(mode == "git" ? "Git repository URL" : mode == "folder" ? "Folder name" : "Absolute remote path", text: $state.workspacePath)
+            TextField("Workspace name (optional)", text: $state.workspaceLabel)
             if let error = state.error { Text(error).font(.caption).foregroundStyle(.red) }
             HStack {
                 Button("Cancel") { state.showingNewWorkspace = false }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Add Workspace") { Task { await state.createWorkspace() } }.buttonStyle(.borderedProminent)
-                    .disabled(state.busy || state.workspacePath.isEmpty || state.workspaceLabel.isEmpty)
+                Button("Add Workspace") {
+                    var input: [String: Any] = [:]
+                    if !state.workspaceLabel.isEmpty { input["label"] = state.workspaceLabel }
+                    if mode == "git" { input["gitUrl"] = state.workspacePath }
+                    else { input["absPath"] = mode == "folder" ? devHome + "/" + state.workspacePath : state.workspacePath }
+                    Task { await state.createWorkspace(input: input) }
+                }.buttonStyle(.borderedProminent).disabled(state.busy || state.workspacePath.isEmpty || (mode == "folder" && devHome.isEmpty))
             }
-        }.textFieldStyle(.roundedBorder).padding(28).frame(width: 450)
+        }.textFieldStyle(.roundedBorder).padding(28).frame(width: 500).task {
+            struct Settings: Decodable { let devHome: String }
+            if let api = state.client, let device = state.deviceID { do { let value: Settings = try await api.device(device, "/api/config/workspace-settings"); devHome = value.devHome } catch { state.error = error.localizedDescription } }
+        }
     }
 }

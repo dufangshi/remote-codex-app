@@ -1,5 +1,11 @@
 import SwiftUI
 
+extension Int { var clampedFontSize: Int { (12...22).contains(self) ? self : 16 } }
+struct TextSizePreference: DynamicProperty {
+    @AppStorage("native-font-size") private var value = 16
+    func points(_ base: CGFloat) -> CGFloat { base * CGFloat(value.clampedFontSize) / 16 }
+}
+
 enum Palette {
     static func adaptive(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
@@ -53,6 +59,11 @@ struct InlineError: View {
 }
 
 extension View {
+    func composerMenuSurface(radius: CGFloat = 12) -> some View {
+        self.background(Palette.panel, in: RoundedRectangle(cornerRadius: radius))
+            .overlay(RoundedRectangle(cornerRadius: radius).stroke(Palette.border))
+            .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
+    }
     @ViewBuilder func controlGlass() -> some View {
         #if compiler(>=6.2)
         if #available(macOS 26, *) {
@@ -63,5 +74,28 @@ extension View {
         #else
         self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         #endif
+    }
+}
+
+struct SlashToolIcon: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: rect.minX + x * rect.width / 16, y: rect.minY + y * rect.height / 16) }
+        p.move(to: point(10.75, 2.5)); p.addLine(to: point(5.25, 13.5))
+        p.move(to: point(4.25, 5.25)); p.addLine(to: point(6.5, 5.25))
+        p.move(to: point(9.5, 10.75)); p.addLine(to: point(11.75, 10.75))
+        return p
+    }
+}
+
+struct MenuRowStyle: ButtonStyle {
+    var selected = false
+    @State private var hovered = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(size: 14)).padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            .foregroundStyle(selected ? Palette.accent : Palette.text)
+            .background(hovered || configuration.isPressed ? Palette.surface : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .onHover { hovered = $0 }
     }
 }

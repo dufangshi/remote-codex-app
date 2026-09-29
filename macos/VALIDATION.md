@@ -1,4 +1,16 @@
-# Native SwiftUI 0.5 validation
+# Native SwiftUI 0.6 validation
+
+## 0.6 focused regression pass
+
+- Timeline projection regression passes: empty reasoning omitted, consecutive commands grouped, intermediate replies retained, summary stubs cannot erase fetched detail. Notification cursor tests pass for baseline suppression, retry, deduplication and untrusted route rejection.
+- Real isolated relay transport integration passed (26.356 seconds); seeded full trace/detail regression passed (1.172 seconds). Synthetic command output retains literal asterisks.
+- Native screenshots/AX compared with the same seeded conversation in Chrome: inline timestamps, intermediate replies, collapsed/expanded command group and raw-output sheet. Settings state-summary preference now controls reasoning visibility.
+- Native menu QA: compact slash menu has no Tools/Close header or arrow; Effort → High saved immediately and the toolbar updated without Apply. Single Settings overlay verified in light and dark, without the outer Settings/Done sheet.
+- Font QA: Chrome 16→17px persisted after reload; Mac 17→21px changed native body/trace immediately and persisted in UserDefaults. Web font normalization/persistence tests, typecheck and build passed.
+- Native Devices/Workspaces navigation, fixture workspace Pin/Unpin and action-menu entry points checked. Destructive/security management mutations were not exercised on production accounts.
+- macOS permission UI cannot be automated by this session; user was asked to allow notifications. Actual system banner and notification-click delivery remain unverified. No APNS/quit-app delivery is claimed.
+
+Older sections below are retained historical evidence, not new 0.6 runs.
 
 ## 0.5 regression pass
 

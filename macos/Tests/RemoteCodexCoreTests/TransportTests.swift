@@ -9,6 +9,37 @@ final class MemoryVault: SecretStore {
 }
 
 final class TransportTests: XCTestCase {
+    func testTimelineOmitsBlankReasoningAndKeepsOrderedNarrative() throws {
+        let rows: [[String: Any]] = [
+            ["id": "r0", "kind": "reasoning", "text": "  "],
+            ["id": "r1", "kind": "reasoning", "text": "**Checking files**"],
+            ["id": "c1", "kind": "commandExecution", "text": "printf hello", "previewText": ""],
+            ["id": "c2", "kind": "commandExecution", "text": "pwd"],
+            ["id": "a1", "kind": "agentMessage", "text": "Result remains visible"]
+        ]
+        let items = try JSONDecoder().decode([HistoryItem].self, from: JSONSerialization.data(withJSONObject: rows))
+        XCTAssertEqual(TimelineProjection.groups(items).map { $0.map(\.id) }, [["r1"], ["c1", "c2"], ["a1"]])
+        XCTAssertEqual(TimelineProjection.label(items[2]), "printf hello")
+        let summaries = try JSONDecoder().decode([HistoryItem].self, from: JSONSerialization.data(withJSONObject: [["id": "r1", "kind": "reasoning", "text": ""], ["id": "a1", "kind": "agentMessage", "text": "Updated reply"]]))
+        let merged = TimelineProjection.merge(detail: items, summary: summaries)
+        XCTAssertEqual(merged.first { $0.id == "r1" }?.text, "**Checking files**", "Summary stubs must not erase fetched detail")
+        XCTAssertEqual(merged.last?.text, "Updated reply")
+    }
+    func testNotificationsSuppressBacklogDeduplicateAndValidateRouting() throws {
+        func event(_ id: String) throws -> WorkbenchNotification {
+            try JSONDecoder().decode(WorkbenchNotification.self, from: JSONSerialization.data(withJSONObject: ["id": id, "title": "Thread completed", "href": "/devices/\(UUID())/threads/\(UUID())", "occurredAt": "2026-09-28T00:00:00Z"]))
+        }
+        let old = try event("old"), fresh = try event("fresh")
+        var cursor = NotificationCursor()
+        XCTAssertTrue(cursor.pending([old]).isEmpty)
+        XCTAssertEqual(cursor.pending([fresh, old]).map(\.id), ["fresh"])
+        XCTAssertEqual(cursor.pending([fresh, old]).map(\.id), ["fresh"], "A failed OS submission remains retryable")
+        cursor.acknowledge(fresh.id)
+        XCTAssertTrue(cursor.pending([fresh, old]).isEmpty)
+        let origin = URL(string: "https://relay.example")!
+        XCTAssertNotNil(NotificationCursor.destination(fresh.href, origin: origin))
+        for href in ["https://evil.example" + fresh.href, "file:///etc/passwd", "/devices/not-a-uuid/threads/wrong", fresh.href + "?token=secret"] { XCTAssertNil(NotificationCursor.destination(href, origin: origin)) }
+    }
     func testRemoteFileLinksNeverTargetTheLocalHost() throws {
         XCTAssertEqual(try RemoteFileLink.path("file:///home/device/project/docs/guide.md#L12", root: "/home/device/project"), "docs/guide.md")
         XCTAssertEqual(try RemoteFileLink.path("../README.md", root: "/home/device/project", document: "docs/start.md"), "README.md")

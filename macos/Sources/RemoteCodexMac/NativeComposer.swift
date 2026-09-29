@@ -2,6 +2,7 @@ import SwiftUI
 
 /// SwiftUI owns the editable surface, selection, undo and accessibility.
 struct NativeComposer: View {
+    private var textSize = TextSizePreference()
     @Binding var text: String
     var code = false
     var readOnly = false
@@ -18,7 +19,7 @@ struct NativeComposer: View {
                         return .ignored
                     }
             }
-        }.font(code ? .system(size: 13, design: .monospaced) : .system(size: 15))
+        }.font(code ? .system(size: textSize.points(13), design: .monospaced) : .system(size: textSize.points(15)))
             .foregroundStyle(Palette.text).scrollIndicators(.never)
             .accessibilityIdentifier(identifier).accessibilityLabel(code ? "File contents" : "Message your agent")
     }

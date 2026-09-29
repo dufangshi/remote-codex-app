@@ -11,6 +11,9 @@ struct NativeWorkbench: View {
     @State private var recentExpanded = true
     @State private var webAction = "Share as link"
     var body: some View {
+        Group {
+        if state.page != "conversation" { PortalPages() }
+        else {
         HStack(spacing: 0) {
             activityRail
             VStack(spacing: 0) {
@@ -28,6 +31,8 @@ struct NativeWorkbench: View {
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+        }
+        }
         }.background(Palette.background)
             .task(id: state.deviceID) { await state.loadDevice() }
             .task(id: state.threadID) { await state.loadThread(); await state.poll() }
@@ -37,8 +42,10 @@ struct NativeWorkbench: View {
             }
             .sheet(isPresented: $state.showingNewThread) { NewThreadView() }
             .sheet(isPresented: $state.showingNewWorkspace) { NewWorkspaceView() }
-            .sheet(isPresented: $state.showingSettings) { SharedSettingsView() }
-            .sheet(isPresented: $state.showingShare) { SharedSettingsView(action: webAction) }
+            .overlay {
+                if state.showingSettings { SharedSettingsView(close: { state.showingSettings = false }) }
+                else if state.showingShare { SharedSettingsView(action: webAction, close: { state.showingShare = false }) }
+            }
             .sheet(item: $renaming) { thread in
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Rename thread").font(.title2.bold())
@@ -57,9 +64,7 @@ struct NativeWorkbench: View {
     }
     private var activityRail: some View {
         VStack(spacing: 18) {
-            Button { state.page = "devices"; Task { await state.refreshPortal() } } label: {
-                Text("rc").font(.system(size: 25, weight: .bold, design: .rounded)).foregroundStyle(Palette.accent).frame(width: 48, height: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain).help("Devices")
+            IconButton(title: "Remote Codex home", icon: "terminal") { state.page = "workspaces" }
             IconButton(title: "Chat", icon: "bubble.left", selected: state.contentMode == "chat") { state.page = "conversation"; state.contentMode = "chat" }
             IconButton(title: "Terminal", icon: "terminal", selected: state.contentMode == "terminal") { state.page = "conversation"; state.contentMode = "terminal" }
             IconButton(title: "Files", icon: "folder", selected: state.contentMode == "files") { state.page = "conversation"; state.contentMode = "files" }
@@ -72,16 +77,9 @@ struct NativeWorkbench: View {
         HStack(spacing: 12) {
             IconButton(title: "Toggle sidebar", icon: "sidebar.left") { state.showingSidebar.toggle() }
             Text("Remote Codex").font(.system(size: 16, weight: .semibold))
+            IconButton(title: "Back to workspaces", icon: "arrow.left") { state.page = "workspaces" }
             Rectangle().fill(Palette.border).frame(width: 1, height: 22).padding(.horizontal, 6)
-            Menu {
-                ForEach(state.devices) { device in
-                    Button { state.deviceID = device.id; state.page = "workspaces" } label: { Label(device.name, systemImage: device.connected == true ? "desktopcomputer" : "desktopcomputer.trianglebadge.exclamationmark") }
-                }
-                Divider()
-                Button("All devices") { state.page = "devices" }
-                Button("Workspaces") { state.page = "workspaces" }
-                Button("Refresh Devices") { Task { await state.refreshPortal() } }
-            } label: { Label(state.deviceName, systemImage: "desktopcomputer").lineLimit(1) }.menuStyle(.borderlessButton).fixedSize()
+            Label(state.deviceName, systemImage: "desktopcomputer").foregroundStyle(Palette.muted).lineLimit(1)
             Button { state.showingSearch.toggle() } label: {
                 Label("Search conversation", systemImage: "magnifyingglass").foregroundStyle(Palette.muted)
             }.buttonStyle(.plain).padding(.leading, 12)
@@ -90,6 +88,8 @@ struct NativeWorkbench: View {
                 .popover(isPresented: $notifications) {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Notifications").font(.headline)
+                        Text(state.notificationStatus).font(.caption).foregroundStyle(Palette.muted)
+                        Button("Enable macOS notifications") { Task { await state.systemNotifications.enable() } }
                         Text("Latest 10 events").font(.caption).foregroundStyle(Palette.muted)
                         ForEach(Array((state.navigation?.notifications ?? []).prefix(10))) { event in
                             Button { state.openNotification(event); notifications = false } label: {
@@ -108,9 +108,8 @@ struct NativeWorkbench: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Button("Workspaces") { state.page = "workspaces" }.buttonStyle(.plain).font(.system(size: 15, weight: .semibold))
+                Text(state.workspaces.first { $0.id == state.workspaceID }?.label ?? "Workspace").font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 Spacer()
-                IconButton(title: "Add workspace", icon: "folder.badge.plus") { state.showingNewWorkspace = true }
             }
             Menu {
                 ForEach(state.workspaces) { workspace in Button(workspace.label) { state.workspaceID = workspace.id } }

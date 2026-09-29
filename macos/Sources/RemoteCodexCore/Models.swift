@@ -4,22 +4,44 @@ public struct Device: Decodable, Identifiable, Hashable {
     public let id: String
     public let name: String
     public let connected: Bool?
+    public let tokenPreview: String?
+    public let lastSeenAt: String?
+    public let hostedStatus: String?
     public init(id: String, name: String, connected: Bool?) {
         self.id = id; self.name = name; self.connected = connected
+        tokenPreview = nil; lastSeenAt = nil; hostedStatus = nil
     }
 }
-public struct Grant: Decodable {
+public struct Grant: Decodable, Identifiable {
+    public let id: String
     public let deviceId: String
     public let deviceName: String?
+    public let deviceConnected: Bool?
     public let scope: String?
+    public let threadId: String?
+    public let threadTitle: String?
+    public let workspaceId: String?
+    public let workspaceLabel: String?
+    public let workspaceScope: String?
+    public let workspaceIds: [String]?
+    public let threadAccess: String?
+    public let workspaceAccess: String?
+    public let canCreateThreads: Bool?
+    public let label: String?
+    public let ownerUsername: String?
+    public let targetUsername: String?
+    public let expiresAt: String?
 }
 public struct Portal: Decodable {
     public let devices: [Device]
     public let sharedDevicesWithMe: [Grant]?
+    public let sharedWithMe: [Grant]?
+    public let sharedByMe: [Grant]?
+    public let grantsByMe: [Grant]?
     public var allDevices: [Device] {
         var result = devices
         for grant in sharedDevicesWithMe ?? [] where !result.contains(where: { $0.id == grant.deviceId }) {
-            result.append(Device(id: grant.deviceId, name: grant.deviceName ?? "Shared device", connected: nil))
+            result.append(Device(id: grant.deviceId, name: grant.deviceName ?? "Shared device", connected: grant.deviceConnected))
         }
         return result
     }
@@ -28,6 +50,8 @@ public struct Workspace: Decodable, Identifiable, Hashable {
     public let id: String
     public let label: String
     public let absPath: String
+    public let isFavorite: Bool?
+    public let lastOpenedAt: String?
 }
 public struct ThreadSummary: Decodable, Identifiable, Hashable {
     public let id: String
@@ -43,6 +67,7 @@ public struct ThreadSummary: Decodable, Identifiable, Hashable {
 }
 public struct HistoryItem: Decodable, Identifiable {
     public let id: String
+    public let createdAt: String?
     public let kind: String
     public let text: String
     public let previewText: String?

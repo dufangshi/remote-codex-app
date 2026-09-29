@@ -1,6 +1,6 @@
 # Remote Codex for Mac — native SwiftUI preview
 
-Version 0.5.0 keeps conversation, composer, navigation, files and terminal native SwiftUI. Settings and sharing/export management dialogs reuse the relay web UI in a scoped WKWebView to retain configuration and permission workflows. Android/iOS are unaffected. macOS 14+, CryptoKit and Keychain; no third-party dependencies.
+Version 0.6.0 keeps conversation, composer, navigation, files and terminal native SwiftUI. Settings and sharing/export management dialogs reuse the relay web UI in a scoped WKWebView to retain configuration and permission workflows. Android/iOS are unaffected. macOS 14+, CryptoKit and Keychain; no third-party dependencies.
 
 ## Build
 
@@ -20,8 +20,11 @@ The host-architecture app and ZIP are under build/. Set MACOS_SIGNING_IDENTITY t
 - Three-turn summary history pages, deferred inline traces with grouped commands, incremental reply refresh, Markdown tables/code/lists, bounded image previews and model/effort summaries.
 - SwiftUI TextEditor composer, system image chooser, discovered model/effort settings, thread creation/fork/rename/delete and HTML export.
 - Native file browser, download, remote conversation links, Markdown preview and revision-checked text editor. Direct-key terminal uses the encrypted WebSocket protocol.
-- Anchored model/reasoning and capability-discovered slash popovers; separate Devices/Workspaces pages and an expandable thread toolbar.
+- Compact anchored model/effort submenus save on selection, without Apply; slash menus use the web-shaped icon without a native popover arrow or redundant heading.
+- Separate Devices/Workspaces management lists, shared access views, workspace pin/rename/path actions, setup commands and import/create forms.
 - Shared web settings for appearance, device management, harnesses, upstream profiles and templates.
+- One-layer Settings overlay with 12–22px text size, immediately mirrored into native conversation/composer/trace rendering and saved locally.
+- macOS completion notifications while the app is running (including with its window closed), with backlog suppression and account-bound click routing. System permission, Focus and macOS delivery policy still apply; quitting the app stops monitoring.
 - Command-N: new chat; Command-comma: Settings; Command-Return: send; Command-F: search loaded history; Command-Shift-E: files.
 - Keychain session restoration and previous-thread restoration, including migration from the 0.3 route preference.
 

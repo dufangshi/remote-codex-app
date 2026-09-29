@@ -75,6 +75,7 @@ public final class RelayClient {
     private var keys: [String: (KeyDescriptor, Double)] = [:]
     private var keyRequests: [String: Task<(KeyDescriptor, Double), Error>] = [:]
     public var signedIn: Bool { token != nil }
+    public var notificationScope: String { Data(SHA256.hash(data: Data((origin.absoluteString + ":" + (token ?? "")).utf8))).base64EncodedString() }
     /// Called only with the relay's same-origin HttpOnly cookie from our isolated WebKit store.
     public func syncBrowserSession(_ value: String?) async throws {
         guard value != token else { return }

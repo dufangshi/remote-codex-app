@@ -26,7 +26,7 @@ final class SettingsBrowser: ObservableObject {
     @Published var startURL: URL?
     var cookies: [HTTPCookie] = []
     var client: RelayClient?
-    static let preferenceKeys: Set<String> = ["remote-codex-theme-mode", "remote-codex-default-backend", "remote-codex-auto-collapse-completed-turns", "remote-codex-show-reasoning-summaries", "remote-codex.explorer-width"]
+    static let preferenceKeys: Set<String> = ["remote-codex-theme-mode", "remote-codex-font-size", "remote-codex-default-backend", "remote-codex-auto-collapse-completed-turns", "remote-codex-show-reasoning-summaries", "remote-codex.explorer-width"]
 
     func reset() {
         web?.stopLoading(); web = nil; coordinator = nil; client = nil
@@ -55,6 +55,7 @@ final class SettingsBrowser: ObservableObject {
             }
             cookies = client.browserCookies()
             initialPreferences["remote-codex-theme-mode"] = UserDefaults.standard.string(forKey: "appearance") ?? "system"
+            initialPreferences["remote-codex-font-size"] = String(UserDefaults.standard.integer(forKey: "native-font-size").clampedFontSize)
             startURL = URL(string: client.origin.absoluteString + path)
         } catch { self.error = error.localizedDescription; loading = false }
     }
@@ -63,11 +64,14 @@ final class SettingsBrowser: ObservableObject {
         url = location
         if let path = BrowserPolicy.rememberedPath(location, origin: origin) { UserDefaults.standard.set(path, forKey: "workspace-route:" + origin.absoluteString) }
     }
-    func persistProfile(_ profile: [String: Any]) async {
-        if let preferences = profile["preferences"] as? [String: String] {
+    func persistPreferences(_ preferences: [String: String]) {
             themeMode = preferences["remote-codex-theme-mode"] ?? "system"; UserDefaults.standard.set(themeMode, forKey: "appearance")
+            if let size = preferences["remote-codex-font-size"].flatMap(Int.init) { UserDefaults.standard.set(size.clampedFontSize, forKey: "native-font-size") }
             if let collapse = preferences["remote-codex-auto-collapse-completed-turns"] { UserDefaults.standard.set(collapse == "true", forKey: "native-auto-collapse") }
-        }
+            if let summaries = preferences["remote-codex-show-reasoning-summaries"] { UserDefaults.standard.set(summaries == "true", forKey: "native-reasoning-summaries") }
+    }
+    func persistProfile(_ profile: [String: Any]) async {
+        if let preferences = profile["preferences"] as? [String: String] { persistPreferences(preferences) }
         guard !savingProfile, !profileKey.isEmpty else { return }
         savingProfile = true; defer { savingProfile = false }
         do {
@@ -82,12 +86,11 @@ final class SettingsBrowser: ObservableObject {
 
 struct SharedSettingsView: View {
     var action = "Open settings"
+    var close: () -> Void
     @EnvironmentObject var state: AppState
     @StateObject private var browser = SettingsBrowser()
-    @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(spacing: 0) {
-            HStack { Text(action == "Open settings" ? "Settings" : action).font(.headline); Spacer(); Button("Done") { dismiss() } }.padding(14).background(Palette.chrome)
             if let message = browser.error {
                 HStack {
                     InlineError(message: message) { browser.error = nil }
@@ -103,13 +106,14 @@ struct SharedSettingsView: View {
             if let url = browser.startURL {
                 SettingsWebView(url: url, cookies: browser.cookies, reportError: { browser.error = $0 }, browser: browser)
             } else if browser.loading {
-                ProgressView("Connecting to your workspace…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 16) { ProgressView("Opening settings…"); Button("Cancel", action: close) }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ContentUnavailableView("Workspace unavailable", systemImage: "network", description: Text("Review the connection error above."))
+                ContentUnavailableView("Workspace unavailable", systemImage: "network", description: Text("Review the connection error above.")); Button("Close", action: close)
             }
         }
         .overlay(alignment: .top) { if browser.loading { ProgressView().progressViewStyle(.linear).frame(height: 2) } }
-        .frame(width: 1000, height: 740)
+        .frame(maxWidth: .infinity, maxHeight: .infinity).background(.black.opacity(0.25))
+        .onExitCommand(perform: close)
         .task {
             browser.action = action
             if let client = state.client {
@@ -120,7 +124,7 @@ struct SharedSettingsView: View {
                 await browser.start(client, devices: state.devices, path: path)
             }
         }
-        .onChange(of: browser.closed) { _, closed in if closed { dismiss() } }
+        .onChange(of: browser.closed) { _, closed in if closed { close() } }
         .onDisappear { Task { if state.client?.signedIn == false { await state.signOut() }; await state.refreshLists(); await state.refreshThread() } }
     }
 }

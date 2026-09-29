@@ -20,6 +20,7 @@ struct SettingsWebView: NSViewRepresentable {
             config.userContentController.add(context.coordinator, name: "workspaceState")
         }
         let web = WKWebView(frame: .zero, configuration: config)
+        web.setValue(false, forKey: "drawsBackground")
         web.navigationDelegate = context.coordinator; web.uiDelegate = context.coordinator
         web.allowsBackForwardNavigationGestures = true
         if let browser {
@@ -43,18 +44,28 @@ struct SettingsWebView: NSViewRepresentable {
     static let observerScript = #"""
     if (location.protocol === 'http:' || location.protocol === 'https:') {
       let busy = false, opened = false, sawDialog = false;
+      const readPreferences = () => {
+        const preferences = {};
+        for (const key of ['remote-codex-theme-mode','remote-codex-font-size','remote-codex-default-backend','remote-codex-auto-collapse-completed-turns','remote-codex-show-reasoning-summaries','remote-codex.explorer-width']) {
+          const value = localStorage.getItem(key); if(value !== null) preferences[key] = value;
+        }
+        return preferences;
+      };
+      const capturePreferences = () => window.webkit.messageHandlers.workspaceState.postMessage({preferences: readPreferences()});
+      window.addEventListener('remote-codex-font-size', capturePreferences);
+      document.addEventListener('change', capturePreferences);
       const launchSettings = () => {
         const dialog = document.querySelector('[role="dialog"],dialog[open]');
         if (dialog) {
           if (!sawDialog) {
             sawDialog = true;
             const style = document.createElement('style');
-            style.textContent = 'body>* {visibility:hidden} [role="dialog"], [role="dialog"] *, dialog[open], dialog[open] *, [role="alertdialog"], [role="alertdialog"] *, [data-radix-popper-content-wrapper], [data-radix-popper-content-wrapper] * {visibility:visible}';
+            style.textContent = 'html,body {background:transparent!important} body>* {visibility:hidden} [role="dialog"], [role="dialog"] *, dialog[open], dialog[open] *, [role="alertdialog"], [role="alertdialog"] *, [data-radix-popper-content-wrapper], [data-radix-popper-content-wrapper] * {visibility:visible}';
             document.head.append(style);
           }
           return;
         }
-        if (sawDialog) { window.webkit.messageHandlers.workspaceState.postMessage({closed:true}); return; }
+        if (sawDialog) { capturePreferences(); window.webkit.messageHandlers.workspaceState.postMessage({closed:true}); return; }
         if (opened) return;
         const button = [...document.querySelectorAll('button')].find(e => e.getAttribute('aria-label') === requestedAction);
         if (!button && requestedAction !== 'Open settings') {
@@ -68,10 +79,7 @@ struct SettingsWebView: NSViewRepresentable {
       const capture = async () => {
         if (busy) return; busy = true;
         try {
-          const preferences = {};
-          for (const key of ['remote-codex-theme-mode','remote-codex-default-backend','remote-codex-auto-collapse-completed-turns','remote-codex-show-reasoning-summaries','remote-codex.explorer-width']) {
-            const value = localStorage.getItem(key); if(value !== null) preferences[key] = value;
-          }
+          const preferences = readPreferences();
           const pins = await new Promise((resolve, reject) => {
             const r = indexedDB.open('remote-codex-transport-v1', 1);
             r.onupgradeneeded = () => r.result.createObjectStore('identities');
@@ -115,6 +123,12 @@ struct SettingsWebView: NSViewRepresentable {
         var observingCookies = false
         init(origin: URL, reportError: @escaping (String) -> Void, browser: SettingsBrowser?) { self.origin = origin; self.reportError = reportError; self.browser = browser }
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            if !bootstrapping, message.frameInfo.isMainFrame, let source = message.frameInfo.request.url,
+               BrowserPolicy.sameOrigin(source, origin), let body = message.body as? [String: Any],
+               let preferences = body["preferences"] as? [String: String],
+               preferences.allSatisfy({ SettingsBrowser.preferenceKeys.contains($0.key) && $0.value.count < 256 }) {
+                browser?.persistPreferences(preferences)
+            }
             if !bootstrapping, message.frameInfo.isMainFrame, let source = message.frameInfo.request.url,
                BrowserPolicy.sameOrigin(source, origin), let body = message.body as? [String: Any], body["closed"] as? Bool == true {
                 browser?.closed = true; return

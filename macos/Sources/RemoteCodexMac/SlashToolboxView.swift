@@ -18,18 +18,15 @@ struct SlashToolboxView: View {
         VStack(alignment: .leading, spacing: 8) {
             if panel != "root" {
                 HStack { Button { panel = "root"; failure = nil } label: { Label("Back", systemImage: "chevron.left") }; Spacer(); Text(panel.capitalized).font(.headline) }
-            } else { HStack { Text("Tools").font(.headline); Spacer(); Button("Close", action: close) } }
+            }
             if loading { ProgressView().controlSize(.small) }
             if let failure { Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     if panel == "root" {
-                        if capabilities["controls"]?["planMode"] == true {
-                            row("/plan", status: plan ? "ON" : "OFF") { Task { await setting(["collaborationMode": plan ? "default" : "plan"]); if failure == nil { plan.toggle() } } }
-                        }
                         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                             let action = item["action"] ?? ""
-                            if available(action) && !(item["command"] == "/plan" && capabilities["controls"]?["planMode"] == true) {
+                            if available(action) {
                                 row(item["command"] ?? item["label"] ?? action, status: status(action)) { Task { await activate(item) } }
                                     .disabled(action == "unsupported" || loading || (["fork", "compact"].contains(action) && state.active))
                                     .help(item["description"] ?? "")
@@ -74,15 +71,14 @@ struct SlashToolboxView: View {
                         }
                     }
                 }
-            }.scrollIndicators(.never).frame(maxHeight: 360)
-        }.padding(12).frame(width: 320).background(Palette.panel).buttonStyle(WorkbenchButton())
+            }.scrollIndicators(.never).frame(height: panel == "root" ? min(360, CGFloat(max(1, items.filter { available($0["action"] ?? "") }.count)) * 38) : 360)
+        }.padding(8).frame(width: 288).fixedSize(horizontal: false, vertical: true).composerMenuSurface(radius: 16).buttonStyle(WorkbenchButton())
             .task { await loadRoot() }
     }
     private func row(_ title: String, status: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack { Text(title); Spacer(); Text(status).font(.system(size: 10)).foregroundStyle(Palette.muted) }
-                .padding(8).frame(maxWidth: .infinity).contentShape(Rectangle())
-        }.buttonStyle(WorkbenchButton())
+            HStack { Text(title); Spacer(); Text(status).font(.system(size: 11)).tracking(1.4).foregroundStyle(Palette.muted) }
+        }.buttonStyle(MenuRowStyle())
     }
     private func available(_ action: String) -> Bool {
         switch action {
