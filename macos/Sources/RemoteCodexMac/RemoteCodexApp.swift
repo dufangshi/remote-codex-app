@@ -86,32 +86,51 @@ struct ThreadSettingsView: View {
     @EnvironmentObject var state: AppState
     @State private var model = ""
     @State private var effort = ""
+    @State private var search = ""
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Conversation model").font(.title2.bold())
-            Picker("Model", selection: $model) {
-                if !state.threadModels.contains(where: { $0.model == model }) { Text(model.isEmpty ? "Loading…" : model).tag(model) }
-                ForEach(state.threadModels) { Text($0.displayName).tag($0.model) }
-            }
-            Picker("Reasoning", selection: $effort) {
-                Text("Auto").tag("")
-                ForEach(state.threadModels.first(where: { $0.model == model })?.supportedReasoningEfforts ?? []) { Text($0.reasoningEffort.capitalized).tag($0.reasoningEffort) }
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack { Text("Model").font(.headline); Spacer(); IconButton(title: "Close model picker", icon: "xmark") { state.showingThreadSettings = false } }
+            TextField("Search models", text: $search).textFieldStyle(.plain).padding(10).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
+            ScrollView {
+                LazyVStack(spacing: 3) {
+                    ForEach(state.threadModels.filter { search.isEmpty || $0.displayName.localizedCaseInsensitiveContains(search) || $0.model.localizedCaseInsensitiveContains(search) }) { choice in
+                        Button {
+                            model = choice.model
+                            if !choice.supportedReasoningEfforts.contains(where: { $0.reasoningEffort == effort }) { effort = "" }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) { Text(choice.displayName); Text(choice.model).font(.caption).foregroundStyle(Palette.muted) }
+                                Spacer(); if model == choice.model { Image(systemName: "checkmark").foregroundStyle(Palette.accent) }
+                            }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(model == choice.model ? Palette.selected : .clear, in: RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
+                    if state.threadModels.isEmpty { ProgressView("Loading available models…").padding() }
+                }
+            }.scrollIndicators(.never).frame(height: 220)
+            Divider()
+            Text("Reasoning effort").font(.caption).foregroundStyle(Palette.muted)
+            ScrollView(.horizontal) {
+                HStack(spacing: 4) {
+                    effortButton("Auto", value: "")
+                    ForEach(state.threadModels.first(where: { $0.model == model })?.supportedReasoningEfforts ?? []) { effortButton($0.reasoningEffort.capitalized, value: $0.reasoningEffort) }
+                }
+            }.scrollIndicators(.never)
             if let error = state.error { Text(error).font(.caption).foregroundStyle(.red) }
             HStack {
-                Button("Cancel") { state.showingThreadSettings = false }.keyboardShortcut(.cancelAction)
+                Text(state.active ? "Available when this turn finishes." : "Applies to this conversation").font(.caption).foregroundStyle(Palette.muted)
                 Spacer()
-                Button("Apply") { Task { await state.saveThreadSettings(model: model, effort: effort) } }.disabled(state.busy || model.isEmpty || state.active).buttonStyle(.borderedProminent)
+                Button("Apply") { Task { await state.saveThreadSettings(model: model, effort: effort) } }.buttonStyle(WorkbenchButton(selected: true)).disabled(state.busy || model.isEmpty || state.active)
             }
-        }.padding(24).frame(width: 440)
+        }.padding(16).frame(width: 370).background(Palette.panel)
             .onAppear {
                 model = state.detail?.thread.model ?? ""
                 let current = state.detail?.thread.reasoningEffort ?? ""
                 effort = current == "auto" ? "" : current
             }
-            .onChange(of: model) { _, value in
-                if !(state.threadModels.first(where: { $0.model == value })?.supportedReasoningEfforts ?? []).contains(where: { $0.reasoningEffort == effort }) { effort = "" }
-            }
+    }
+    private func effortButton(_ title: String, value: String) -> some View {
+        Button(title) { effort = value }.buttonStyle(WorkbenchButton(selected: effort == value))
+            .background(effort == value ? Palette.selected : Palette.surface, in: RoundedRectangle(cornerRadius: 7))
     }
 }
 

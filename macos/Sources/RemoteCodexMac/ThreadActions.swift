@@ -32,6 +32,7 @@ extension AppState {
     }
     func selectReference(_ device: String, _ thread: String) {
         guard UUID(uuidString: device) != nil, UUID(uuidString: thread) != nil else { return }
+        page = "conversation"
         if device == deviceID {
             if let row = threads.first(where: { $0.id == thread }) { workspaceID = row.workspaceId }
             threadID = thread; contentMode = "chat"
@@ -83,18 +84,33 @@ extension AppState {
     }
     func loadOlderHistory() async {
         guard !historyLoading, let api = client, let device = deviceID, let thread = threadID, let first = history.first else { return }
-        historyLoading = true; defer { historyLoading = false }
+        let generation = selectionGeneration
+        historyLoading = true; defer { if generation == selectionGeneration { historyLoading = false } }
         do {
-            let page: ThreadDetail = try await api.device(device, "/api/threads/\(thread)?limit=20&view=full&beforeTurnId=\(first.id)")
-            guard device == deviceID, thread == threadID, !Task.isCancelled else { return }
+            let page: ThreadDetail = try await api.device(device, "/api/threads/\(thread)?limit=3&view=summary&beforeTurnId=\(first.id)")
+            guard generation == selectionGeneration, client === api, device == deviceID, thread == threadID, !Task.isCancelled else { return }
             mergeHistory(page.turns, prepend: true)
             if page.turns.isEmpty { historyExhausted = true }
             threadError = nil
-        } catch { if device == deviceID, thread == threadID, !Task.isCancelled { threadError = error.localizedDescription } }
+        } catch { if generation == selectionGeneration, client === api, device == deviceID, thread == threadID, !Task.isCancelled { threadError = error.localizedDescription } }
     }
     func itemDetail(thread: String, item: String) async throws -> HistoryItem {
         guard let api = client, let device = deviceID else { throw APIError("Select a device first.") }
         return try await api.device(device, "/api/threads/\(thread)/items/\(item.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))) ?? item)/detail")
+    }
+    func turnDetail(thread: String, turn: String) async throws -> Turn {
+        guard let api = client, let device = deviceID else { throw APIError("Select a device first.") }
+        return try await api.device(device, "/api/threads/\(thread)/turns/\(turn)/detail")
+    }
+    func openRemoteLink(_ url: URL, document: String? = nil) {
+        if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { NSWorkspace.shared.open(url); return }
+        guard url.scheme == nil || url.scheme == "file", let files = fileWorkspace,
+              let root = workspaces.first(where: { $0.id == workspaceID })?.absPath else { error = "Unsupported link destination."; return }
+        do {
+            let path = try RemoteFileLink.path(url.absoluteString, root: root, document: document)
+            contentMode = "files"
+            Task { await files.openPath(path) }
+        } catch { self.error = error.localizedDescription }
     }
     func selectWorkspace() {
         guard let api = client, let device = deviceID, let workspace = workspaces.first(where: { $0.id == workspaceID }) else { fileWorkspace = nil; return }

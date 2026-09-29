@@ -1,6 +1,6 @@
 # Remote Codex for Mac — native SwiftUI preview
 
-Version 0.4.0 replaces the 0.3 web workspace with a native SwiftUI view tree. There is no WKWebView, HTML renderer, JavaScript bridge, or embedded React UI in the Mac app. Android/iOS are unaffected. macOS 14+, CryptoKit and Keychain; no third-party dependencies.
+Version 0.5.0 keeps conversation, composer, navigation, files and terminal native SwiftUI. Settings and sharing/export management dialogs reuse the relay web UI in a scoped WKWebView to retain configuration and permission workflows. Android/iOS are unaffected. macOS 14+, CryptoKit and Keychain; no third-party dependencies.
 
 ## Build
 
@@ -17,14 +17,15 @@ The host-architecture app and ZIP are under build/. Set MACOS_SIGNING_IDENTITY t
 ## Native workspace
 
 - Web-aligned activity rail, sidebar, workspace tabs, shared account recents/favorites, latest ten notifications, green accent and light/dark/system palettes.
-- Native conversation history, incremental reply refresh, Markdown tables/code/lists, bounded image previews, tool-detail popovers, model/effort and usage summaries.
+- Three-turn summary history pages, deferred inline traces with grouped commands, incremental reply refresh, Markdown tables/code/lists, bounded image previews and model/effort summaries.
 - SwiftUI TextEditor composer, system image chooser, discovered model/effort settings, thread creation/fork/rename/delete and HTML export.
-- Native file browser and revision-checked text editor. Command terminal uses the encrypted WebSocket protocol.
-- Native settings for appearance, device management, harnesses, upstream profiles and templates.
+- Native file browser, download, remote conversation links, Markdown preview and revision-checked text editor. Direct-key terminal uses the encrypted WebSocket protocol.
+- Anchored model/reasoning and capability-discovered slash popovers; separate Devices/Workspaces pages and an expandable thread toolbar.
+- Shared web settings for appearance, device management, harnesses, upstream profiles and templates.
 - Command-N: new chat; Command-comma: Settings; Command-Return: send; Command-F: search loaded history; Command-Shift-E: files.
 - Keychain session restoration and previous-thread restoration, including migration from the 0.3 route preference.
 
-AppKit is used for operating-system integration (file panels, clipboard, images and quit confirmation), not to embed a web interface.
+AppKit provides file panels, clipboard, images and quit confirmation. Only scoped management dialogs use WebKit; the main workbench does not embed a web conversation.
 
 ## Security and persistence
 
@@ -44,4 +45,4 @@ REMOTE_CODEX_MAC_E2E_ENV="$PWD/../.local/e2e-env.json" swift test
 
 See [PARITY.md](PARITY.md) for interface comparisons and remaining differences, and [VALIDATION.md](VALIDATION.md) for protocol/native UI checks.
 
-This is a native preview, not complete web feature parity. The command terminal is not a full-screen VT/TUI emulator. Markdown covers common conversation blocks, not every CommonMark extension, math renderer or web plugin. The editor is plain text without Monaco/LSP. Advanced sharing/admin/plugin workflows and OAuth/passkeys are not implemented. Chat currently polls while active rather than receiving WebSocket deltas. Management mutations have controls and confirmations but have not all been qualified against real installed harnesses.
+This is a native preview, not complete web feature parity. The terminal implements a VT subset, not a full emulator. Markdown covers common conversation blocks, not every CommonMark extension, math renderer or web plugin. The editor is plain text without Monaco/LSP. OAuth/passkey onboarding is not qualified. Chat polls rather than receiving WebSocket deltas. MCP/hooks editing delegates to Settings; native goal controls are incomplete. Management mutations have not all been qualified against real installed harnesses.

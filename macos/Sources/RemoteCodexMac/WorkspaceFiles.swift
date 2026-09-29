@@ -60,14 +60,18 @@ final class WorkspaceFiles: ObservableObject {
     }
     func open(_ node: FileNode) async {
         if node.isDirectory { await browse(node.path); return }
-        if documents.contains(where: { $0.id == node.path }) { selected = node.path; return }
-        if let size = node.size, size > 64 * 1024 * 1024 { error = "This file is larger than the 64 MB native transfer limit. Use the full workspace download view."; return }
+        await openPath(node.path)
+    }
+    func openPath(_ path: String) async {
+        if documents.contains(where: { $0.id == path }) { selected = path; return }
         loading = true; error = nil; defer { loading = false }
         do {
-            let data = try await api.read(node.path)
+            let data = try await api.read(path)
             guard !Task.isCancelled else { return }
-            if !documents.contains(where: { $0.id == node.path }) { documents.append(FileDocument(path: node.path, bytes: data)) }
-            selected = node.path
+            if !documents.contains(where: { $0.id == path }) { documents.append(FileDocument(path: path, bytes: data)) }
+            selected = path
+            let parent = (path as NSString).deletingLastPathComponent
+            await browse(parent.isEmpty ? "." : parent)
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
     func save(_ doc: FileDocument) async {
@@ -104,6 +108,12 @@ final class WorkspaceFiles: ObservableObject {
         let panel = NSSavePanel(); panel.nameFieldStringValue = (doc.id as NSString).lastPathComponent
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do { try (doc.editable ? Data(doc.text.utf8) : doc.original).write(to: url, options: .atomic) }
+        catch { self.error = error.localizedDescription }
+    }
+    func download(_ path: String) async {
+        let panel = NSSavePanel(); panel.nameFieldStringValue = (path as NSString).lastPathComponent
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { let bytes = try await api.read(path); try bytes.write(to: url, options: .atomic) }
         catch { self.error = error.localizedDescription }
     }
 }

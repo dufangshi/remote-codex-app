@@ -65,12 +65,16 @@ final class AppState: ObservableObject {
     @Published var conversationQuery = ""
     @Published var deviceLoading = false
     @Published var navigation: WorkbenchSnapshot?
+    @Published var page = "conversation"
+    @Published var showingTools = false
+    @Published var showingShare = false
     @Published var pinnedThreads = Set(UserDefaults.standard.stringArray(forKey: "native-pinned-threads") ?? [])
     @Published var showingThreadSettings = false
     @Published var threadModels: [ModelOption] = []
     private(set) var client: RelayClient?
     var fileSessions: [String: WorkspaceFiles] = [:]
-    private var refreshInFlight = Set<String>()
+    private var refreshInFlight: [String: UUID] = [:]
+    private(set) var selectionGeneration = UUID()
     private var drafts: [String: (String, [DraftImage])] = [:]
     private var loadedThread: String?
     private var pendingSubmissions: [String: (fingerprint: String, requestID: String)] = [:]
@@ -169,13 +173,14 @@ final class AppState: ObservableObject {
         }
     }
     func loadThread() async {
+        selectionGeneration = UUID()
         if let previous = loadedThread { drafts[previous] = (draft, images) }
         loadedThread = threadID
         if let device = deviceID, let thread = threadID {
             UserDefaults.standard.set(thread, forKey: "native-thread:" + relay + "/" + device)
         }
         let saved = threadID.flatMap { drafts[$0] }
-        draft = saved?.0 ?? ""; images = saved?.1 ?? []; detail = nil; history = []; historyExhausted = false; threadError = nil
+        draft = saved?.0 ?? ""; images = saved?.1 ?? []; detail = nil; history = []; historyExhausted = false; historyLoading = false; threadError = nil
         if threadID != nil { contentMode = "chat" }
         await refreshThread()
         await recordVisit()
@@ -183,17 +188,19 @@ final class AppState: ObservableObject {
     func refreshThread() async {
         guard let api = client, let device = deviceID, let thread = threadID else { return }
         let key = device + "/" + thread
-        guard refreshInFlight.insert(key).inserted else { return }
+        let generation = selectionGeneration
+        guard refreshInFlight[key] != generation else { return }
+        refreshInFlight[key] = generation
         threadLoading = detail == nil
-        defer { refreshInFlight.remove(key); if thread == threadID { threadLoading = false } }
+        defer { if refreshInFlight[key] == generation { refreshInFlight.removeValue(forKey: key) }; if generation == selectionGeneration { threadLoading = false } }
         do {
-            let value: ThreadDetail = try await api.device(device, "/api/threads/\(thread)?limit=20&view=full")
-            guard client === api, device == deviceID, thread == threadID, !Task.isCancelled else { return }
+            let value: ThreadDetail = try await api.device(device, "/api/threads/\(thread)?limit=3&view=summary")
+            guard generation == selectionGeneration, client === api, device == deviceID, thread == threadID, !Task.isCancelled else { return }
             mergeHistory(value.turns)
             detail = value; lastRefresh = Date(); threadError = nil
             if let index = threads.firstIndex(where: { $0.id == thread }) { threads[index] = value.thread }
         } catch {
-            if client === api, device == deviceID, thread == threadID, !Task.isCancelled { threadError = error.localizedDescription }
+            if generation == selectionGeneration, client === api, device == deviceID, thread == threadID, !Task.isCancelled { threadError = error.localizedDescription }
         }
     }
     func poll() async {

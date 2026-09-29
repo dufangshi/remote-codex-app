@@ -1,4 +1,17 @@
-# Native SwiftUI 0.4 validation
+# Native SwiftUI 0.5 validation
+
+## 0.5 regression pass
+
+- Swift build passed. A 14-test run passed transport/integration, remote-file-link and terminal-buffer checks; its new Markdown setext case exposed a quote-classification error. After fixing that parser, the failing Markdown test passed on its targeted rerun.
+- The real isolated relay integration passed (28.524 seconds), including chat, encrypted attachments, large continuations, file edits/conflicts and encrypted terminal traffic.
+- An additional seeded trace integration passed (1.183 seconds): summaries defer commands, full detail retains both intermediate assistant messages and command order, and item detail preserves literal asterisks. Enable with REMOTE_CODEX_MAC_TRACE_E2E=1 after scripts/seed-native-trace.mjs; the script refuses non-loopback/non-isolated databases.
+- Native QA verified trace expansion, downloaded README bytes, remote-link Markdown preview, model High selection, Devices/Workspaces navigation, shared Settings close/return, and sharing dialog entry without creating public access.
+- Direct terminal printf, arrow-history replay, Ctrl-C and exit were exercised in the isolated fixture.
+- Final native QA also created a fresh terminal and received NATIVE-05-RECOVERY through direct key input. The updated initial scroll showed the latest turn on reopen. Production-named 0.5 restored the existing login/conversation; its real model/effort catalog and slash commands were inspected without sending a production prompt.
+- A 1.26 MB user message initially caused an accessibility text-layout hang. Native message rendering now reveals 6,000 characters at a time, and the QA app remained responsive with the remaining-character control visible.
+- UI screenshots/accessibility were inspected; these checks do not establish complete web parity. See PARITY.md for specific remaining gaps.
+
+The sections below retain baseline 0.4 evidence; their original run counts are not new 0.5 full-suite results.
 
 Development target: Apple Silicon, macOS 27.2, Xcode 27 beta; deployment minimum macOS 14. No claim of physical macOS 14/Intel qualification.
 

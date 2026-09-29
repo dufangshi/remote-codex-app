@@ -9,6 +9,29 @@ final class MemoryVault: SecretStore {
 }
 
 final class TransportTests: XCTestCase {
+    func testRemoteFileLinksNeverTargetTheLocalHost() throws {
+        XCTAssertEqual(try RemoteFileLink.path("file:///home/device/project/docs/guide.md#L12", root: "/home/device/project"), "docs/guide.md")
+        XCTAssertEqual(try RemoteFileLink.path("../README.md", root: "/home/device/project", document: "docs/start.md"), "README.md")
+        XCTAssertEqual(try RemoteFileLink.path("/home/device/project/a%20b.md:12", root: "/home/device/project"), "a b.md")
+        XCTAssertEqual(try RemoteFileLink.path("C:/work/project/docs/a.md", root: "C:\\work\\project"), "docs/a.md")
+        for path in ["../../etc/passwd", "file://other/home/key", "/Users/mac/.ssh/id_rsa", "https://evil.test/a", "//evil.test/a"] {
+            XCTAssertThrowsError(try RemoteFileLink.path(path, root: "/home/device/project"))
+        }
+    }
+    func testTerminalPreservesEscapeStateCursorAndAlternateScreen() {
+        var terminal = TerminalBuffer()
+        terminal.feed("hello\rHELLO\r\nnext")
+        XCTAssertEqual(terminal.text, "HELLO\nnext")
+        terminal.feed("\u{1b}["); terminal.feed("2K\rreplaced")
+        XCTAssertEqual(terminal.text, "HELLO\nreplaced")
+        terminal.feed("\u{1b}[?2004h"); XCTAssertTrue(terminal.bracketedPaste)
+        terminal.feed("\u{1b}[?1049hTUI\u{1b}[2;1Hrow two")
+        XCTAssertEqual(terminal.text, "TUI\nrow two")
+        terminal.feed("\u{1b}[?1049l")
+        XCTAssertEqual(terminal.text, "HELLO\nreplaced")
+        terminal.feed("\u{1b}]0;private title"); terminal.feed("\u{7}")
+        XCTAssertFalse(terminal.text.contains("private"))
+    }
     func testNativeMarkdownBlocks() {
         let input = "# Title\n\nText **bold**.\n\n| Feature | State |\n| --- | :---: |\n| Chat | Ready |\n| Files | |\n\n~~~swift\nlet n = 1\n~~~\n\n- [x] tested\n> Quote\n---"
         XCTAssertEqual(MarkdownParser.blocks(input), [.heading(1, "Title"), .paragraph("Text **bold**."),
@@ -17,6 +40,7 @@ final class TransportTests: XCTestCase {
         XCTAssertEqual(MarkdownParser.cells("| escaped\\|pipe | \u{60}a|b\u{60} |"), ["escaped|pipe", "\u{60}a|b\u{60}"])
         XCTAssertEqual(MarkdownParser.blocks("~~~txt\nstreaming code"), [.code("txt", "streaming code")])
         XCTAssertEqual(MarkdownParser.blocks("a | b\nnot a separator"), [.paragraph("a | b\nnot a separator")])
+        XCTAssertEqual(MarkdownParser.blocks("Title\n===\n\n> first\n> second\n\n~~~~text\n~~~\n~~~~"), [.heading(1, "Title"), .quote("first\nsecond"), .code("text", "~~~")])
     }
     func testSocketCipherRejectsReplayTamperAndPlaintext() throws {
         let a = SymmetricKey(size: .bits256), b = SymmetricKey(size: .bits256)
@@ -144,6 +168,26 @@ final class TransportTests: XCTestCase {
         let response = try AES.GCM.seal(clear, using: recipient.exportSecret(context: context, outputByteCount: 32), nonce: AES.GCM.Nonce(data: Data(repeating: 0, count: 12)), authenticating: aad)
         XCTAssertEqual(try AES.GCM.open(response, using: sender.exportSecret(context: context, outputByteCount: 32), authenticating: aad), clear)
         XCTAssertThrowsError(try AES.GCM.open(response, using: sender.exportSecret(context: context, outputByteCount: 32), authenticating: Data("tampered".utf8)))
+    }
+    @MainActor func testSeededTraceSummaryAndDetail() async throws {
+        guard ProcessInfo.processInfo.environment["REMOTE_CODEX_MAC_TRACE_E2E"] == "1", let file = ProcessInfo.processInfo.environment["REMOTE_CODEX_MAC_E2E_ENV"] else { throw XCTSkip("Run seed-parity and seed-native-trace in the isolated fixture.") }
+        struct Fixture: Decodable { let relayUrl: String; let username: String; let password: String; let deviceId: String }
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: URL(fileURLWithPath: file)))
+        guard URL(string: fixture.relayUrl)?.host == "127.0.0.1" else { throw APIError("Loopback fixture required.") }
+        let client = try await RelayClient(origin: fixture.relayUrl, vault: MemoryVault())
+        _ = try await client.login(identifier: fixture.username, password: fixture.password)
+        let threads: [ThreadSummary] = try await client.device(fixture.deviceId, "/api/threads")
+        let thread = try XCTUnwrap(threads.first { $0.title == "Mac parity checklist" })
+        let summary: ThreadDetail = try await client.device(fixture.deviceId, "/api/threads/\(thread.id)?limit=3&view=summary")
+        let turn = try XCTUnwrap(summary.turns.first { $0.hasDeferredItems == true })
+        XCTAssertFalse(turn.items.contains { $0.kind == "commandExecution" })
+        let full: Turn = try await client.device(fixture.deviceId, "/api/threads/\(thread.id)/turns/\(turn.id)/detail")
+        XCTAssertTrue(full.items.contains { $0.text == "First intermediate checkpoint is retained." })
+        XCTAssertTrue(full.items.contains { $0.text == "Second intermediate checkpoint is retained." })
+        let commands = full.items.filter { $0.kind == "commandExecution" }
+        XCTAssertEqual(commands.map(\.text), ["printf trace-one", "printf trace-two"])
+        let detail: HistoryItem = try await client.device(fixture.deviceId, "/api/threads/\(thread.id)/items/\(commands[0].id)/detail")
+        XCTAssertTrue(detail.text.contains("literal asterisks"))
     }
     @MainActor func testIsolatedRustRelayInterop() async throws {
         guard let file = ProcessInfo.processInfo.environment["REMOTE_CODEX_MAC_E2E_ENV"] else {

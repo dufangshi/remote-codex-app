@@ -4,6 +4,9 @@ import RemoteCodexCore
 struct ConversationView: View {
     @EnvironmentObject var state: AppState
     @State private var followLatest = true
+    @State private var initialScroll = false
+    @State private var prepending = false
+    @State private var slashOpen = false
     var body: some View {
         VStack(spacing: 0) {
             if state.showingSearch {
@@ -22,8 +25,14 @@ struct ConversationView: View {
                             if state.hasOlderHistory {
                                 Button(state.historyLoading ? "Loading…" : "Earlier messages") {
                                     let anchor = state.history.first?.id
-                                    Task { await state.loadOlderHistory(); if let anchor { proxy.scrollTo(anchor, anchor: .top) } }
-                                }.buttonStyle(.plain).foregroundStyle(Palette.muted).disabled(state.historyLoading).frame(maxWidth: .infinity)
+                                    prepending = true
+                                    Task { await state.loadOlderHistory(); if let anchor { proxy.scrollTo(anchor, anchor: .top) }; prepending = false }
+                                }.buttonStyle(WorkbenchButton()).disabled(state.historyLoading).frame(maxWidth: .infinity)
+                                    .onAppear {
+                                        guard initialScroll, !followLatest, !prepending else { return }
+                                        let anchor = state.history.first?.id; prepending = true
+                                        Task { await state.loadOlderHistory(); if let anchor { proxy.scrollTo(anchor, anchor: .top) }; prepending = false }
+                                    }
                             }
                             ForEach(matching) { turn in NativeTurnView(turn: turn, thread: detail.thread.id).id(turn.id) }
                             if state.history.isEmpty {
@@ -32,10 +41,10 @@ struct ConversationView: View {
                             Color.clear.frame(height: 1).id("latest")
                                 .onAppear { followLatest = true }.onDisappear { followLatest = false }
                         }.padding(.horizontal, 36).padding(.vertical, 28).frame(maxWidth: 1000).frame(maxWidth: .infinity)
-                    }.scrollIndicators(.never)
-                        .onAppear { proxy.scrollTo("latest", anchor: .bottom) }
+                    }.scrollIndicators(.never).defaultScrollAnchor(.bottom)
+                        .task { await Task.yield(); proxy.scrollTo("latest", anchor: .bottom); initialScroll = true }
                         .onChange(of: state.history.last?.items.last?.text) { _, _ in if followLatest { proxy.scrollTo("latest", anchor: .bottom) } }
-                        .onChange(of: state.history.count) { old, new in if followLatest && new > old { proxy.scrollTo("latest", anchor: .bottom) } }
+                        .onChange(of: state.history.count) { old, new in if followLatest && !prepending && new > old { proxy.scrollTo("latest", anchor: .bottom) } }
                         .overlay(alignment: .bottom) {
                             if !followLatest {
                                 Button { proxy.scrollTo("latest", anchor: .bottom) } label: { Image(systemName: "arrow.down.to.line").padding(10) }
@@ -79,11 +88,9 @@ struct ConversationView: View {
                     if state.draft.isEmpty { Text("Message your agent…").foregroundStyle(Palette.muted.opacity(0.65)).padding(.top, 6).padding(.leading, 5).allowsHitTesting(false) }
                 }
             HStack(spacing: 10) {
-                Menu {
-                    Button("Summarize conversation") { state.draft += "Summarize our conversation and the next steps." }
-                    Button("Review workspace changes") { state.draft += "Review the current workspace changes." }
-                } label: { Image(systemName: "command").frame(width: 24, height: 24) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Prompt shortcuts")
+                Button { slashOpen.toggle() } label: { Text("/").font(.system(size: 21, weight: .medium)).frame(width: 32, height: 32).contentShape(Rectangle()) }
+                    .buttonStyle(WorkbenchButton()).accessibilityLabel("Open slash toolbox")
+                    .popover(isPresented: $slashOpen, arrowEdge: .top) { SlashToolboxView(close: { slashOpen = false }) }
                 IconButton(title: "Attach images", icon: "plus") { state.addImages() }
                 Spacer(minLength: 4)
                 Button { Task { await state.prepareThreadSettings() } } label: {
@@ -93,6 +100,7 @@ struct ConversationView: View {
                         Image(systemName: "chevron.down").font(.caption2)
                     }.font(.system(size: 12)).foregroundStyle(Palette.muted)
                 }.buttonStyle(.plain).disabled(state.active)
+                    .popover(isPresented: $state.showingThreadSettings, arrowEdge: .top) { ThreadSettingsView() }
                 if state.active {
                     IconButton(title: "Stop Current Turn", icon: "stop.fill") { Task { await state.interrupt() } }
                 }
@@ -116,9 +124,29 @@ private struct NativeTurnView: View {
     let turn: Turn
     let thread: String
     @State private var toolsOpen = false
+    @AppStorage("native-auto-collapse") private var autoCollapse = true
     @State private var usageOpen = false
     @State private var forkConfirm = false
-    private var tools: [HistoryItem] { turn.items.filter { !["userMessage", "user", "agentMessage", "assistantMessage", "assistant", "image"].contains($0.kind) } }
+    @State private var complete: Turn?
+    @State private var loading = false
+    @State private var failure: String?
+    @State private var detailRevision = 0
+    private var entries: [HistoryItem] {
+        guard let complete else { return turn.items }
+        let updates = Dictionary(turn.items.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        let ids = Set(complete.items.map(\.id))
+        return complete.items.map { updates[$0.id] ?? $0 } + turn.items.filter { !ids.contains($0.id) }
+    }
+    private var finalMessage: HistoryItem? { entries.last { ["agentMessage", "assistantMessage", "assistant"].contains($0.kind) && !$0.text.isEmpty } }
+    private var tools: [HistoryItem] { entries.filter { !["userMessage", "user"].contains($0.kind) && $0.id != finalMessage?.id } }
+    private var groups: [[HistoryItem]] {
+        var result: [[HistoryItem]] = []
+        for item in tools {
+            if item.kind == "commandExecution", result.last?.last?.kind == "commandExecution" { result[result.count - 1].append(item) }
+            else { result.append([item]) }
+        }
+        return result
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             ForEach(turn.items.filter { ["userMessage", "user"].contains($0.kind) }) { item in
@@ -127,22 +155,15 @@ private struct NativeTurnView: View {
                     MessageView(item: item, threadID: thread)
                 }
             }
-            ForEach(turn.items.filter { ["agentMessage", "assistantMessage", "assistant", "image"].contains($0.kind) }) { MessageView(item: $0, threadID: thread) }
             HStack(spacing: 10) {
                 Circle().fill(turn.status == "inProgress" ? Palette.accent : Palette.muted).frame(width: 6, height: 6)
                 Button { toolsOpen.toggle() } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: tools.isEmpty ? "checkmark" : "chevron.right").font(.caption)
-                        Text(durationLabel)
+                        Image(systemName: toolsOpen ? "chevron.down" : "chevron.right").font(.caption)
+                        Text(loading ? "Loading complete history…" : durationLabel)
                     }
-                }.buttonStyle(.plain).popover(isPresented: $toolsOpen, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack { Text("Turn activity").font(.headline); Spacer(); Button("Done") { toolsOpen = false } }
-                        ScrollView { LazyVStack(alignment: .leading, spacing: 12) { ForEach(tools) { MessageView(item: $0, threadID: thread) } } }
-                        if tools.isEmpty { Text("No tool steps in this turn.").foregroundStyle(Palette.muted) }
-                    }.padding(20).frame(width: 660, height: 450)
-                }
-                if !tools.isEmpty { Text("\(tools.count) steps") }
+                }.buttonStyle(.plain).contentShape(Rectangle()).accessibilityLabel("Expand turn activity")
+                if let count = turn.deferredItemCount ?? Optional(tools.count), count > 0 { Text("\(count) steps") }
                 if let model = turn.model { Text(model).lineLimit(1).truncationMode(.middle) }
                 if let effort = turn.reasoningEffort { Text("· " + effort).fixedSize() }
                 Spacer(minLength: 0)
@@ -163,7 +184,33 @@ private struct NativeTurnView: View {
                     Button("Fork from this turn…") { forkConfirm = true }
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }.font(.system(size: 11)).foregroundStyle(Palette.muted)
+            if toolsOpen {
+                if let failure { InlineError(message: failure) { self.failure = nil }; Button("Retry activity") { detailRevision += 1 } }
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(groups, id: \.first!.id) { group in
+                        HStack(alignment: .top, spacing: 14) {
+                            Circle().fill(Palette.accent.opacity(0.7)).frame(width: 6, height: 6).padding(.top, 7)
+                            VStack(alignment: .leading, spacing: 8) {
+                                if group.count > 1 { Label("Ran \(group.count) commands", systemImage: "terminal").font(.callout).foregroundStyle(Palette.muted) }
+                                ForEach(Array(group.enumerated()), id: \.element.id) { index, entry in
+                                    HStack(alignment: .top, spacing: 10) {
+                                        if group.count > 1 { Text(String(format: "%02d", index + 1)).font(.caption.monospaced()).foregroundStyle(Palette.muted).padding(.top, 14) }
+                                        MessageView(item: entry, threadID: thread).frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }.padding(.leading, 14).overlay(alignment: .leading) { Palette.border.frame(width: 1).allowsHitTesting(false) }
+            }
+            if let finalMessage { MessageView(item: finalMessage, threadID: thread) }
             if let error = turn.error { Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.red).textSelection(.enabled) }
+        }.onAppear { toolsOpen = !autoCollapse }
+        .task(id: "\(toolsOpen)/\(turn.status)/\(turn.items.last?.text.count ?? 0)/\(detailRevision)") {
+            guard toolsOpen, turn.hasDeferredItems == true else { return }
+            loading = true; defer { loading = false }
+            do { let value = try await state.turnDetail(thread: thread, turn: turn.id); if !Task.isCancelled { complete = value; failure = nil } }
+            catch { if !Task.isCancelled { failure = error.localizedDescription } }
         }.confirmationDialog("Fork from this turn?", isPresented: $forkConfirm) {
             Button("Create Fork") { Task { await state.fork(turn: turn.id) } }
             Button("Cancel", role: .cancel) {}
@@ -186,6 +233,7 @@ struct MessageView: View {
     @State private var expanded = false
     @State private var fetched: HistoryItem?
     @State private var failure: String?
+    private var detailText: String { [fetched?.detailText, fetched?.text, item.detailText, item.text].compactMap { $0 }.first { !$0.isEmpty } ?? "No output." }
     private var isUser: Bool { ["userMessage", "user"].contains(item.kind) }
     private var message: Bool { ["userMessage", "user", "agentMessage", "assistantMessage", "assistant"].contains(item.kind) }
     var body: some View {
@@ -193,7 +241,7 @@ struct MessageView: View {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(MessageSegment.parse(item.text)) { segment in
                     if let text = segment.text {
-                        if isUser { Text(text).font(.system(size: 15)).lineSpacing(5).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+                        if isUser { PagedMessageText(text: text) }
                         else { MarkdownContent(text: text) }
                     }
                     if let path = segment.photoPath { NativeImage(path: path, threadID: threadID) }
@@ -207,7 +255,12 @@ struct MessageView: View {
             NativeImage(path: path, threadID: threadID)
         } else {
             DisclosureGroup(isExpanded: $expanded) {
-                MarkdownContent(text: fetched?.detailText ?? fetched?.text ?? item.detailText ?? item.text).padding(.top, 10)
+                if item.kind == "reasoning" || item.kind == "plan" {
+                    MarkdownContent(text: detailText).padding(.top, 10)
+                } else {
+                    ScrollView(.horizontal) { Text(detailText).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false).padding(12) }
+                        .scrollIndicators(.never).background(Palette.panel, in: RoundedRectangle(cornerRadius: 8))
+                }
                 if let failure { Text(failure).foregroundStyle(.red).font(.caption) }
             } label: {
                 Label(item.previewText ?? item.text.components(separatedBy: .newlines).first ?? item.kind,
@@ -215,11 +268,33 @@ struct MessageView: View {
                     .font(.system(size: 12)).lineLimit(2).foregroundStyle(Palette.muted)
             }.padding(12).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
                 .task(id: expanded) {
-                    if expanded, fetched == nil, item.hasDeferredDetail == true {
+                    if expanded, fetched == nil, item.hasDeferredDetail == true || ["commandExecution", "fileChange"].contains(item.kind) {
                         do { fetched = try await state.itemDetail(thread: threadID, item: item.id) }
                         catch { if !Task.isCancelled { failure = error.localizedDescription } }
                     }
                 }
+        }
+    }
+}
+
+private struct PagedMessageText: View {
+    let text: String
+    @State private var limit = 6000
+    private var chunks: [String] {
+        let visible = String(text.prefix(limit))
+        var result: [String] = [], cursor = visible.startIndex
+        while cursor < visible.endIndex {
+            let end = visible.index(cursor, offsetBy: 2000, limitedBy: visible.endIndex) ?? visible.endIndex
+            result.append(String(visible[cursor..<end])); cursor = end
+        }
+        return result
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(chunks.enumerated()), id: \.offset) { _, part in
+                Text(part).font(.system(size: 15)).lineSpacing(5).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            if text.count > limit { Button("Show more · \(text.count - limit) characters remaining") { limit += 6000 }.buttonStyle(WorkbenchButton()).padding(.top, 8) }
         }
     }
 }
@@ -252,16 +327,19 @@ struct NativeImage: View {
 }
 
 struct MarkdownContent: View {
+    @EnvironmentObject var state: AppState
     let text: String
-    @State private var full = false
+    var document: String? = nil
+    @State private var characterLimit = 48_000
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(Array(MarkdownParser.blocks(String(text.prefix(full ? 1_000_000 : 24_000))).enumerated()), id: \.offset) { _, block in
+            ForEach(Array(MarkdownParser.blocks(String(text.prefix(characterLimit))).enumerated()), id: \.offset) { _, block in
                 render(block)
             }
-            if !full && text.count > 24_000 { Button("Show full message") { full = true } }
+            if text.count > characterLimit { Button("Show more (\(text.count - characterLimit) characters remaining)") { characterLimit += 120_000 } }
         }.font(.system(size: 15)).foregroundStyle(Palette.text).lineSpacing(5)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .environment(\.openURL, OpenURLAction { url in state.openRemoteLink(url, document: document); return .handled })
     }
     @ViewBuilder private func render(_ block: MarkdownBlock) -> some View {
         switch block {

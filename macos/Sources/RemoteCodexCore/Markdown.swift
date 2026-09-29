@@ -15,7 +15,8 @@ public enum MarkdownParser {
         while i < lines.count {
             let line = lines[i], trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                flush(); let marker = String(trimmed.prefix(3)); let language = String(trimmed.dropFirst(3)); i += 1
+                flush(); let fence = trimmed.first!; let count = trimmed.prefix { $0 == fence }.count
+                let marker = String(repeating: String(fence), count: count); let language = String(trimmed.dropFirst(count)).trimmingCharacters(in: .whitespaces); i += 1
                 var code: [String] = []
                 while i < lines.count, !lines[i].trimmingCharacters(in: .whitespaces).hasPrefix(marker) { code.append(lines[i]); i += 1 }
                 result.append(.code(language, code.joined(separator: "\n")))
@@ -25,9 +26,18 @@ public enum MarkdownParser {
                     let row = cells(lines[i]); rows.append(Array((row + Array(repeating: "", count: header.count)).prefix(header.count))); i += 1
                 }
                 result.append(.table(header, rows)); continue
+            } else if i + 1 < lines.count, !trimmed.isEmpty, trimmed.range(of: "^(?:>|#|[-*+] |[0-9]+[.)] )", options: .regularExpression) == nil,
+                      lines[i + 1].range(of: "^\\s*(?:={3,}|-{3,})\\s*$", options: .regularExpression) != nil {
+                flush(); result.append(.heading(lines[i + 1].contains("=") ? 1 : 2, trimmed)); i += 1
             } else if trimmed.isEmpty { flush() }
             else if ["---", "***", "___"].contains(trimmed) { flush(); result.append(.rule) }
-            else if trimmed.hasPrefix("> ") { flush(); result.append(.quote(String(trimmed.dropFirst(2)))) }
+            else if trimmed.hasPrefix(">") {
+                flush(); var quoted: [String] = []
+                while i < lines.count, lines[i].trimmingCharacters(in: .whitespaces).hasPrefix(">") {
+                    quoted.append(String(lines[i].trimmingCharacters(in: .whitespaces).dropFirst()).trimmingCharacters(in: .whitespaces)); i += 1
+                }
+                result.append(.quote(quoted.joined(separator: "\n"))); continue
+            }
             else if let range = trimmed.range(of: "^#{1,6} ", options: .regularExpression) {
                 flush(); result.append(.heading(trimmed[range].count - 1, String(trimmed[range.upperBound...])))
             } else if let range = trimmed.range(of: "^(?:[-*+] |[0-9]+[.)] )", options: .regularExpression) {
@@ -46,7 +56,7 @@ public enum MarkdownParser {
         if s.hasPrefix("|") { s.removeFirst() }; if s.hasSuffix("|") { s.removeLast() }
         var values: [String] = [], value = "", escaped = false, code = false
         for c in s {
-            if escaped { value.append(c); escaped = false; continue }
+            if escaped { if c != "|" { value.append("\\") }; value.append(c); escaped = false; continue }
             if c == "\\" { escaped = true; continue }
             if c == "`" { code.toggle() }
             if c == "|", !code { values.append(value.trimmingCharacters(in: .whitespaces)); value = "" }

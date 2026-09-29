@@ -35,8 +35,12 @@ struct FilesView: View {
                                     if node.isDirectory { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
                                 }.padding(.vertical, 4).contentShape(Rectangle())
                             }.buttonStyle(.plain).accessibilityIdentifier("file-" + node.name)
+                                .contextMenu {
+                                    if !node.isDirectory { Button("Download…") { Task { await files.download(node.path) } } }
+                                    Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(node.path, forType: .string) }
+                                }
                         }
-                    }.listStyle(.inset)
+                    }.listStyle(.inset).scrollContentBackground(.hidden).background(Palette.chrome)
                 }.frame(minWidth: 180, idealWidth: 220, maxWidth: 300)
                 VStack(spacing: 0) {
                     if !files.documents.isEmpty {
@@ -56,6 +60,7 @@ struct FilesView: View {
                 }.frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .buttonStyle(WorkbenchButton())
         .task { if files.nodes.isEmpty { await files.browse() } }
         .sheet(isPresented: $files.showingCreate) {
             VStack(alignment: .leading, spacing: 18) {
@@ -97,12 +102,16 @@ private struct FileEditor: View {
     @ObservedObject var document: FileDocument
     @ObservedObject var files: WorkspaceFiles
     @State private var confirmReload = false
+    @State private var preview = true
+    private var markdown: Bool { ["md", "markdown", "mdown"].contains((document.id as NSString).pathExtension.lowercased()) }
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text(document.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
                 Spacer()
-                Button("Export…") { files.export(document) }
+                if markdown { Button(preview ? "Edit Markdown" : "Preview") { preview.toggle() } }
+                Button("Download…") { Task { await files.download(document.id) } }
+                if document.dirty { Button("Save draft as…") { files.export(document) } }
                 if document.editable {
                     Button("Reload") { if document.dirty { confirmReload = true } else { Task { await files.reload(document) } } }
                     Button(document.saving ? "Saving…" : "Save") { Task { await files.save(document) } }
@@ -112,8 +121,12 @@ private struct FileEditor: View {
             }.padding(12)
             Divider()
             if document.editable {
-                NativeComposer(text: $document.text, code: true, identifier: "fileEditor") { Task { await files.save(document) } }
-                    .padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
+                if markdown && preview {
+                    ScrollView { MarkdownContent(text: document.text, document: document.id).padding(28) }.scrollIndicators(.never)
+                } else {
+                    NativeComposer(text: $document.text, code: true, identifier: "fileEditor") { Task { await files.save(document) } }
+                        .padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                 HStack {
                     Text(document.dirty ? "Unsaved changes" : "Saved on device")
                     Spacer(); Text("UTF-8 · \(document.text.utf8.count) bytes")
@@ -124,7 +137,7 @@ private struct FileEditor: View {
                 ContentUnavailableView("Read-only file", systemImage: "doc", description: Text("Binary, non-UTF-8 and text files over 4 MB cannot be safely edited here. Export the original bytes, or use the full workspace."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }.background(Color(nsColor: .textBackgroundColor))
+        }.background(Palette.panel).buttonStyle(WorkbenchButton())
             .confirmationDialog("Replace your draft with the remote file?", isPresented: $confirmReload) {
                 Button("Discard Draft and Reload", role: .destructive) { Task { await files.reload(document) } }
                 Button("Cancel", role: .cancel) { }

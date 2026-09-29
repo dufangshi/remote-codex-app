@@ -50,6 +50,7 @@ public struct HistoryItem: Decodable, Identifiable {
     public let status: String?
     public let assetPath: String?
     public let hasDeferredDetail: Bool?
+    public let title: String?
 }
 public struct Turn: Decodable, Identifiable {
     public let id: String
@@ -62,6 +63,8 @@ public struct Turn: Decodable, Identifiable {
     public let completedAt: String?
     public let tokenUsage: TokenUsage?
     public let priceEstimate: PriceEstimate?
+    public let hasDeferredItems: Bool?
+    public let deferredItemCount: Int?
 }
 public struct TokenUsage: Decodable { public let total: TokenBreakdown }
 public struct TokenBreakdown: Decodable {

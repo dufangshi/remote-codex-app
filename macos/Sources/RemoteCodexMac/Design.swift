@@ -19,10 +19,12 @@ enum Palette {
 }
 struct WorkbenchButton: ButtonStyle {
     var selected = false
+    @State private var hovered = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.padding(8).contentShape(RoundedRectangle(cornerRadius: 8))
-            .background(selected ? Palette.accent.opacity(0.12) : configuration.isPressed ? Palette.surface : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(selected ? Palette.accent.opacity(0.12) : configuration.isPressed || hovered ? Palette.surface : .clear, in: RoundedRectangle(cornerRadius: 8))
             .foregroundStyle(selected ? Palette.accent : Palette.muted)
+            .onHover { hovered = $0 }
     }
 }
 struct IconButton: View {

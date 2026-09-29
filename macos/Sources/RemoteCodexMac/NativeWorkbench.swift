@@ -9,17 +9,19 @@ struct NativeWorkbench: View {
     @State private var notifications = false
     @State private var shortcutsExpanded = true
     @State private var recentExpanded = true
+    @State private var webAction = "Share as link"
     var body: some View {
         HStack(spacing: 0) {
             activityRail
             VStack(spacing: 0) {
                 topbar
                 HStack(spacing: 0) {
-                    if state.showingSidebar { sidebar.frame(width: 236); Divider().overlay(Palette.border) }
+                    if state.showingSidebar && state.page == "conversation" { sidebar.frame(width: 236); Divider().overlay(Palette.border) }
                     VStack(spacing: 0) {
-                        tabs
+                        if state.page == "conversation" { tabs; if state.showingTools { toolsBar } }
                         if let error = state.error { InlineError(message: error) { state.error = nil } }
-                        if state.contentMode == "files", let files = state.fileWorkspace {
+                        if state.page != "conversation" { selectionPage }
+                        else if state.contentMode == "files", let files = state.fileWorkspace {
                             FilesView(files: files).id(files.api.deviceID + files.api.workspaceID)
                         } else if state.contentMode == "terminal" { NativeTerminalView().id(state.deviceID ?? "") }
                         else { ConversationView().id(state.threadID) }
@@ -35,8 +37,8 @@ struct NativeWorkbench: View {
             }
             .sheet(isPresented: $state.showingNewThread) { NewThreadView() }
             .sheet(isPresented: $state.showingNewWorkspace) { NewWorkspaceView() }
-            .sheet(isPresented: $state.showingThreadSettings) { ThreadSettingsView() }
-            .sheet(isPresented: $state.showingSettings) { NativeSettingsView() }
+            .sheet(isPresented: $state.showingSettings) { SharedSettingsView() }
+            .sheet(isPresented: $state.showingShare) { SharedSettingsView(action: webAction) }
             .sheet(item: $renaming) { thread in
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Rename thread").font(.title2.bold())
@@ -55,14 +57,16 @@ struct NativeWorkbench: View {
     }
     private var activityRail: some View {
         VStack(spacing: 18) {
-            Text("rc").font(.system(size: 25, weight: .bold, design: .rounded)).foregroundStyle(Palette.accent).padding(.top, 12).padding(.bottom, 10)
-            IconButton(title: "Chat", icon: "bubble.left", selected: state.contentMode == "chat") { state.contentMode = "chat" }
-            IconButton(title: "Terminal", icon: "terminal", selected: state.contentMode == "terminal") { state.contentMode = "terminal" }
-            IconButton(title: "Files", icon: "folder", selected: state.contentMode == "files") { state.contentMode = "files" }
+            Button { state.page = "devices"; Task { await state.refreshPortal() } } label: {
+                Text("rc").font(.system(size: 25, weight: .bold, design: .rounded)).foregroundStyle(Palette.accent).frame(width: 48, height: 44).contentShape(Rectangle())
+            }.buttonStyle(.plain).help("Devices")
+            IconButton(title: "Chat", icon: "bubble.left", selected: state.contentMode == "chat") { state.page = "conversation"; state.contentMode = "chat" }
+            IconButton(title: "Terminal", icon: "terminal", selected: state.contentMode == "terminal") { state.page = "conversation"; state.contentMode = "terminal" }
+            IconButton(title: "Files", icon: "folder", selected: state.contentMode == "files") { state.page = "conversation"; state.contentMode = "files" }
             Spacer()
             IconButton(title: "Settings", icon: "gearshape") { state.showingSettings = true }
         }.padding(.bottom, 12).frame(width: 50).background(Palette.chrome)
-            .overlay(alignment: .trailing) { Palette.border.frame(width: 1) }
+            .overlay(alignment: .trailing) { Palette.border.frame(width: 1).allowsHitTesting(false) }
     }
     private var topbar: some View {
         HStack(spacing: 12) {
@@ -71,9 +75,11 @@ struct NativeWorkbench: View {
             Rectangle().fill(Palette.border).frame(width: 1, height: 22).padding(.horizontal, 6)
             Menu {
                 ForEach(state.devices) { device in
-                    Button { state.deviceID = device.id } label: { Label(device.name, systemImage: device.connected == true ? "desktopcomputer" : "desktopcomputer.trianglebadge.exclamationmark") }
+                    Button { state.deviceID = device.id; state.page = "workspaces" } label: { Label(device.name, systemImage: device.connected == true ? "desktopcomputer" : "desktopcomputer.trianglebadge.exclamationmark") }
                 }
                 Divider()
+                Button("All devices") { state.page = "devices" }
+                Button("Workspaces") { state.page = "workspaces" }
                 Button("Refresh Devices") { Task { await state.refreshPortal() } }
             } label: { Label(state.deviceName, systemImage: "desktopcomputer").lineLimit(1) }.menuStyle(.borderlessButton).fixedSize()
             Button { state.showingSearch.toggle() } label: {
@@ -102,14 +108,17 @@ struct NativeWorkbench: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Workspace").font(.system(size: 15, weight: .semibold))
+                Button("Workspaces") { state.page = "workspaces" }.buttonStyle(.plain).font(.system(size: 15, weight: .semibold))
                 Spacer()
                 IconButton(title: "Add workspace", icon: "folder.badge.plus") { state.showingNewWorkspace = true }
             }
-            Picker("Workspace", selection: $state.workspaceID) {
-                Text("Choose workspace").tag(String?.none)
-                ForEach(state.workspaces) { Text($0.label).tag(Optional($0.id)) }
-            }.labelsHidden()
+            Menu {
+                ForEach(state.workspaces) { workspace in Button(workspace.label) { state.workspaceID = workspace.id } }
+                Divider(); Button("All workspaces") { state.page = "workspaces" }
+            } label: {
+                HStack { Image(systemName: "folder"); Text(state.workspaces.first { $0.id == state.workspaceID }?.label ?? "Choose workspace").lineLimit(1); Spacer(); Image(systemName: "chevron.down").font(.caption) }
+                    .padding(9).frame(maxWidth: .infinity).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
+            }.menuStyle(.borderlessButton).menuIndicator(.hidden).accessibilityLabel("Choose workspace")
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
                 TextField("Find a chat", text: $state.query).textFieldStyle(.plain)
@@ -151,7 +160,7 @@ struct NativeWorkbench: View {
                 Text(reference.title).font(.system(size: 14)).lineLimit(1)
                 Text(reference.deviceName + " · " + reference.workspaceLabel).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1)
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(state.deviceID == reference.deviceId && state.threadID == reference.threadId ? Palette.selected : .clear, in: RoundedRectangle(cornerRadius: 9))
+                .contentShape(Rectangle()).background(state.deviceID == reference.deviceId && state.threadID == reference.threadId ? Palette.selected : .clear, in: RoundedRectangle(cornerRadius: 9))
         }.buttonStyle(.plain).contextMenu {
             Button(reference.favorite ? "Unpin" : "Pin to Shortcuts") { Task { await state.setFavorite(reference, favorite: !reference.favorite) } }
         }
@@ -184,32 +193,93 @@ struct NativeWorkbench: View {
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
                     ForEach(state.visibleThreads) { thread in
-                        Button { state.threadID = thread.id; state.contentMode = "chat" } label: {
+                        Button { state.selectReference(state.deviceID ?? "", thread.id) } label: {
                             HStack(spacing: 8) {
                                 Circle().stroke(thread.activeTurnId == nil ? Palette.muted : Palette.accent, lineWidth: 1.5).frame(width: 6, height: 6)
                                 Text(thread.title.isEmpty ? "Untitled" : thread.title).lineLimit(1)
                             }.padding(.horizontal, 16).frame(height: 42).frame(maxWidth: 190)
                                 .background(state.threadID == thread.id ? Palette.background : .clear)
-                                .overlay(alignment: .bottom) { if state.threadID == thread.id { Palette.accent.frame(height: 2) } }
+                                .contentShape(Rectangle())
+                                .overlay(alignment: .bottom) { if state.threadID == thread.id { Palette.accent.frame(height: 2).allowsHitTesting(false) } }
                                 .overlay(alignment: .trailing) { Palette.border.frame(width: 1) }
                         }.buttonStyle(.plain)
                     }
                     IconButton(title: "New Chat", icon: "plus") { Task { await state.prepareNewThread() } }.disabled(state.workspaceID == nil)
                 }
             }.scrollIndicators(.never)
+            IconButton(title: "Thread tools", icon: "slider.horizontal.3", selected: state.showingTools) { state.showingTools.toggle() }.disabled(state.threadID == nil)
+        }.frame(height: 42).background(Palette.chrome).overlay(alignment: .bottom) { Palette.border.frame(height: 1) }
+    }
+    private var toolsBar: some View {
+        HStack(spacing: 8) {
+            Button { state.page = "workspaces" } label: { Label(state.workspaces.first { $0.id == state.workspaceID }?.label ?? "Workspace", systemImage: "folder") }.buttonStyle(WorkbenchButton())
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(Palette.muted)
+            Text(state.detail?.thread.title ?? "Loading…").lineLimit(1).font(.system(size: 13))
+            IconButton(title: "Pin / Unpin", icon: "star") {
+                let favorite = state.navigation?.threads.first { $0.deviceId == state.deviceID && $0.threadId == state.threadID }?.favorite ?? false
+                Task { await state.recordVisit(favorite: !favorite) }
+            }
+            Spacer()
+            IconButton(title: "Share as link", icon: "link") { webAction = "Share as link"; state.showingShare = true }
+            IconButton(title: "Sharing permissions", icon: "person.2") { webAction = "Sharing permissions"; state.showingShare = true }
+            IconButton(title: "Download transcript", icon: "arrow.down.to.line") { webAction = "Download transcript"; state.showingShare = true }
             Menu {
                 Button("Model and reasoning…") { Task { await state.prepareThreadSettings() } }
-                Button("Export latest 100 turns…") { Task { await state.exportTranscript() } }
+                Button("Copy Remote Codex session ID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(state.threadID ?? "", forType: .string) }
                 if let thread = state.detail?.thread {
-                    Button("Pin / Unpin") {
-                        let favorite = state.navigation?.threads.first { $0.deviceId == state.deviceID && $0.threadId == thread.id }?.favorite ?? false
-                        Task { await state.recordVisit(favorite: !favorite) }
-                    }
                     Button("Rename…") { title = thread.title; renaming = thread }
                     Button("Delete…", role: .destructive) { deleting = thread }.disabled(state.active)
                 }
-            } label: { Image(systemName: "slider.horizontal.3").frame(width: 40, height: 40) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Thread tools").disabled(state.threadID == nil)
-        }.frame(height: 42).background(Palette.chrome).overlay(alignment: .bottom) { Palette.border.frame(height: 1) }
+            } label: { Image(systemName: "ellipsis").frame(width: 30, height: 32).contentShape(Rectangle()) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Thread actions")
+            IconButton(title: "Toggle Explorer", icon: "sidebar.right") { state.contentMode = state.contentMode == "files" ? "chat" : "files" }
+        }.padding(.horizontal, 12).frame(height: 46).background(Palette.chrome)
+    }
+    private var selectionPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(state.page == "devices" ? "Your devices" : state.deviceName).font(.system(size: 28, weight: .semibold))
+                        Text(state.page == "devices" ? "Choose a connected device to browse its workspaces." : "Workspaces").foregroundStyle(Palette.muted)
+                    }
+                    Spacer()
+                    if state.page == "workspaces" {
+                        Button("All devices") { state.page = "devices" }
+                        Button("Add workspace") { state.showingNewWorkspace = true }
+                    }
+                    Button("Refresh") { Task { if state.page == "devices" { await state.refreshPortal() } else { await state.refreshLists() } } }
+                }
+                if state.deviceLoading && state.page == "workspaces" { ProgressView("Loading workspaces…") }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 18)], spacing: 18) {
+                    if state.page == "devices" {
+                        ForEach(state.devices) { device in
+                            Button { state.deviceID = device.id; state.page = "workspaces" } label: {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    Image(systemName: "desktopcomputer").font(.title)
+                                    Text(device.name).font(.headline)
+                                    Label(device.connected == true ? "Online" : "Offline / shared", systemImage: "circle.fill").font(.caption).foregroundStyle(device.connected == true ? Palette.accent : Palette.muted)
+                                }.frame(maxWidth: .infinity, alignment: .leading).padding(24).background(Palette.panel, in: RoundedRectangle(cornerRadius: 14)).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }
+                    } else {
+                        ForEach(state.workspaces) { workspace in
+                            Button {
+                                state.workspaceID = workspace.id; state.selectWorkspace()
+                                state.threadID = state.threads.first { $0.workspaceId == workspace.id }?.id
+                                state.page = "conversation"; state.contentMode = "chat"
+                            } label: {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Image(systemName: "folder").font(.title).foregroundStyle(Palette.accent)
+                                    Text(workspace.label).font(.headline)
+                                    Text(workspace.absPath).font(.caption.monospaced()).foregroundStyle(Palette.muted).lineLimit(2)
+                                    Text("\(state.threads.filter { $0.workspaceId == workspace.id }.count) conversations").font(.caption)
+                                }.frame(maxWidth: .infinity, alignment: .leading).padding(24).background(Palette.panel, in: RoundedRectangle(cornerRadius: 14)).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+            }.padding(36)
+        }.scrollIndicators(.never).buttonStyle(WorkbenchButton())
     }
 }
