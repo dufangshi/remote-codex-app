@@ -27,6 +27,14 @@ The sections below retain baseline 0.4 evidence; their original run counts are n
 
 Development target: Apple Silicon, macOS 27.2, Xcode 27 beta; deployment minimum macOS 14. No claim of physical macOS 14/Intel qualification.
 
+## Explorer 0.6.1
+
+- Native SwiftUI header now provides workspace-scoped breadcrumbs and Back to chat; AppKit code editing adds asynchronous lexical syntax highlighting without a WebView.
+- Three focused Explorer tests passed, covering breadcrumb traversal boundaries, Unicode token ranges, language rules and the 500,000 UTF-16-unit plain-text fallback.
+- The real isolated Rust relay integration passed (28.987 seconds), including rejection of file-tree navigation above the workspace root.
+- Native QA verified TSX highlighting, editing, undo, draft retention across chat navigation, Command-S with on-disk read-back, ancestor breadcrumb navigation and a disabled parent button at the root.
+- Highlighting is lexical, not semantic/LSP analysis. Large files remain editable without highlighting.
+
 ## Automated checks
 
 The final Swift test run passed **12 tests, zero failures**, in 26.219 seconds, including the real isolated relay integration.

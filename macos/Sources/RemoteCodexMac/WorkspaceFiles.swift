@@ -46,9 +46,9 @@ final class WorkspaceFiles: ObservableObject {
     init(api: WorkspaceAPI, label: String) { self.api = api; self.label = label }
     func browse(_ path: String? = nil) async {
         let request = UUID(); revision = request
-        let target = path ?? directory
         loading = true; error = nil
         do {
+            let target = try WorkspacePath.normalize(path ?? directory)
             let root = try await api.tree(target)
             guard revision == request, !Task.isCancelled else { return }
             directory = target; nodes = root.children ?? []; loading = false

@@ -2,12 +2,33 @@ import SwiftUI
 import RemoteCodexCore
 
 struct FilesView: View {
+    @EnvironmentObject var state: AppState
     @ObservedObject var files: WorkspaceFiles
+    private var crumbs: [WorkspacePath.Crumb] { (try? WorkspacePath.breadcrumbs(files.directory, rootLabel: files.label)) ?? [] }
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Label(files.label, systemImage: "folder").font(.headline)
-                Spacer()
+            HStack(spacing: 12) {
+                Button { Task { await files.browse(try? WorkspacePath.parent(files.directory)) } } label: { Image(systemName: "arrow.up") }
+                    .disabled(files.directory == ".").help("Parent folder").accessibilityLabel("Parent folder")
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 6) {
+                            ForEach(crumbs) { crumb in
+                                if crumb.path != "." { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(Palette.muted) }
+                                Button { Task { await files.browse(crumb.path) } } label: {
+                                    HStack(spacing: 7) {
+                                        if crumb.path == "." { Image(systemName: "folder") }
+                                        Text(crumb.label).font(crumb.path == "." ? .headline : .system(size: 13, design: .monospaced)).fixedSize()
+                                    }
+                                }.buttonStyle(.plain).help(crumb.path == "." ? "Workspace root" : crumb.path)
+                                    .accessibilityLabel("Browse folder " + (crumb.path == "." ? files.label + " (workspace root)" : crumb.path)).id(crumb.id)
+                            }
+                        }.padding(.vertical, 6)
+                    }.scrollIndicators(.never)
+                        .onChange(of: files.directory) { _, path in proxy.scrollTo(path, anchor: .trailing) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Button { state.contentMode = "chat" } label: { Label("Back to chat", systemImage: "bubble.left") }
+                    .help("Return to conversation; keep file tabs and unsaved edits").accessibilityIdentifier("backToChat")
                 Button { files.showingCreate = true } label: { Label("New File", systemImage: "doc.badge.plus") }
                 Button { Task { await files.browse() } } label: { Image(systemName: "arrow.clockwise") }.help("Refresh directory")
             }.padding(16)
@@ -16,15 +37,9 @@ struct FilesView: View {
             HSplitView {
                 VStack(spacing: 0) {
                     HStack {
-                        Button {
-                            let parent = (files.directory as NSString).deletingLastPathComponent
-                            Task { await files.browse(parent.isEmpty ? "." : parent) }
-                        } label: { Image(systemName: "arrow.up") }.disabled(files.directory == ".")
-                        Text(files.directory).font(.caption.monospaced()).lineLimit(1).truncationMode(.head)
-                        Spacer()
+                        TextField("Filter files", text: $files.filter).textFieldStyle(.roundedBorder)
                         if files.loading { ProgressView().controlSize(.small) }
                     }.padding(10)
-                    TextField("Filter files", text: $files.filter).textFieldStyle(.roundedBorder).padding(.horizontal, 10).padding(.bottom, 8)
                     List {
                         ForEach(files.nodes.filter { files.filter.isEmpty || $0.name.localizedCaseInsensitiveContains(files.filter) }) { node in
                             Button { Task { await files.open(node) } } label: {
@@ -99,6 +114,7 @@ private struct FileTab: View {
 }
 
 private struct FileEditor: View {
+    var textSize = TextSizePreference()
     @ObservedObject var document: FileDocument
     @ObservedObject var files: WorkspaceFiles
     @State private var confirmReload = false
@@ -124,12 +140,14 @@ private struct FileEditor: View {
                 if markdown && preview {
                     ScrollView { MarkdownContent(text: document.text, document: document.id).padding(28) }.scrollIndicators(.never)
                 } else {
-                    NativeComposer(text: $document.text, code: true, identifier: "fileEditor") { Task { await files.save(document) } }
+                    CodeEditor(text: $document.text, path: document.id, fontSize: textSize.points(13)) { Task { await files.save(document) } }
                         .padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 HStack {
                     Text(document.dirty ? "Unsaved changes" : "Saved on device")
-                    Spacer(); Text("UTF-8 · \(document.text.utf8.count) bytes")
+                    Spacer()
+                    Text(document.text.utf16.count > CodeSyntax.maximumUTF16Length ? "Plain text (large file)" : (CodeSyntax.language(document.id) ?? "Plain text"))
+                    Text("UTF-8 · \(document.text.utf8.count) bytes")
                 }.font(.caption).foregroundStyle(.secondary).padding(10)
             } else if let image = document.image {
                 ScrollView([.horizontal, .vertical]) { Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: 1200, maxHeight: 1000).padding(24) }

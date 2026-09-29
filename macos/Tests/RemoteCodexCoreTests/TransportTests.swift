@@ -271,6 +271,8 @@ final class TransportTests: XCTestCase {
         XCTAssertEqual(downloaded, Data(largeText.utf8))
         let tree = try await files.tree()
         XCTAssertTrue(tree.children?.contains { $0.name == filename } == true)
+        do { _ = try await files.tree(".."); XCTFail("Navigation above the workspace root was accepted") }
+        catch { XCTAssertFalse(error.localizedDescription.isEmpty) }
         let edited = try await files.save(filename, content: "saved from native editor\n", original: downloaded)
         XCTAssertEqual(edited, Data("saved from native editor\n".utf8))
         do { _ = try await files.save(filename, content: "stale overwrite", original: downloaded); XCTFail("Conflicting edit was accepted") }
