@@ -49,6 +49,7 @@ public struct HistoryItem: Decodable, Identifiable {
     public let detailText: String?
     public let status: String?
     public let assetPath: String?
+    public let hasDeferredDetail: Bool?
 }
 public struct Turn: Decodable, Identifiable {
     public let id: String
@@ -68,6 +69,16 @@ public struct ThreadDetail: Decodable {
     public let thread: ThreadSummary
     public let turns: [Turn]
     public let pendingRequests: [ActionRequest]
+    public let totalTurnCount: Int?
+}
+public struct FileNode: Decodable, Identifiable {
+    public let name: String
+    public let path: String
+    public let kind: String
+    public let size: Int?
+    public let children: [FileNode]?
+    public var id: String { path }
+    public var isDirectory: Bool { kind == "directory" }
 }
 public struct ReasoningOption: Decodable, Identifiable {
     public let reasoningEffort: String

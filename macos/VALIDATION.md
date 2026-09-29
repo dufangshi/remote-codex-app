@@ -4,7 +4,7 @@ Development target: Apple Silicon, macOS 27.2, Xcode 27 beta; deployment minimum
 
 ## Automated checks
 
-- Swift package compilation and seven XCTest cases.
+- Swift package compilation and eight XCTest cases.
 - Origin validation (HTTPS or loopback HTTP; no embedded credentials, paths or query).
 - Base64url, bounded binary packet parsing, truncated/malformed metadata rejection.
 - Signed descriptor challenge verification and tamper rejection.
@@ -24,6 +24,17 @@ Development target: Apple Silicon, macOS 27.2, Xcode 27 beta; deployment minimum
 - Inspected both dark and light settings/chat appearance, then restored System appearance and signed out of the synthetic account.
 
 ## Packaging observations
+
+## 0.2.0 regression checks
+
+- Real Rust encrypted continuations: 1.26 MB conversation and approximately 2.6 MB UTF-8 file round trips; sequential scoped chunk validation rejects cross-scope, changed-stream and malformed URLs.
+- File create/read/save/read-back, stale-content conflict refusal, duplicate-create refusal, history pagination, High/Auto settings round trips.
+- Native QA UI opened the large conversation, edited README.md with Command-S, reloaded saved content, and loaded the embedded authenticated thread and Settings without a second login.
+- Initial UI testing exposed concurrent first-use Keychain writes; device key fetches now coalesce and Keychain insert races retry an update. The final eight-test integration run passed after this fix.
+- QA uses a separate bundle ID and Keychain service. No production chat prompt or production file edit is part of the fixture tests.
+- Rebuilt the production-named 0.2.0 app after normally quitting 0.1.0. Existing Keychain login restored; the exact reported wsl → remoteCodex → 1 conversation opened with its completed history and model/effort visible, without the continuation error. Read-only production verification only.
+
+## Signing and deployment
 
 Rebuilding a signed executable in-place while it was running caused macOS to terminate the **old test process** with `Code Signature Invalid`. The build script now refuses to overwrite a running app. Keychain operations were moved off the main actor so OS access prompts cannot freeze the application UI. Only the synthetic loopback session and identity entries were removed during this test reset; no production Keychain entries were touched.
 

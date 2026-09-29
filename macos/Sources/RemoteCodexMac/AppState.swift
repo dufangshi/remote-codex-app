@@ -52,7 +52,20 @@ final class AppState: ObservableObject {
     @Published var newTitle = ""
     @Published var approvalMode = "guarded"
     @Published var lastRefresh: Date?
-    private var client: RelayClient?
+    @Published var contentMode = "chat"
+    @Published var threadLoading = false
+    @Published var threadError: String?
+    @Published var historyLoading = false
+    @Published var history: [Turn] = []
+    @Published var historyExhausted = false
+    @Published var fileWorkspace: WorkspaceFiles?
+    @Published var webURL: URL?
+    @Published var webCookies: [HTTPCookie] = []
+    @Published var showingThreadSettings = false
+    @Published var threadModels: [ModelOption] = []
+    private(set) var client: RelayClient?
+    var fileSessions: [String: WorkspaceFiles] = [:]
+    private var refreshInFlight = Set<String>()
     private var drafts: [String: (String, [DraftImage])] = [:]
     private var loadedThread: String?
     private var pendingSubmissions: [String: (fingerprint: String, requestID: String)] = [:]
@@ -63,14 +76,16 @@ final class AppState: ObservableObject {
     var selectedModel: ModelOption? { models.first { $0.model == modelID } }
     var active: Bool { detail?.thread.activeTurnId != nil }
     var deviceName: String { devices.first { $0.id == deviceID }?.name ?? "Device" }
+    var hasOlderHistory: Bool { !historyExhausted && (detail?.totalTurnCount ?? history.count) > history.count }
+    var hasUnsavedFiles: Bool { fileSessions.values.contains { $0.hasUnsavedChanges } }
 
     func perform(_ work: () async throws -> Void) async {
-        do { try await work() } catch is CancellationError { } catch { self.error = error.localizedDescription }
+        do { try await work() } catch is CancellationError { } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
     func restore() async {
         busy = true; defer { busy = false }
         await perform {
-            let api = try await RelayClient(origin: relay)
+            let api = try await RelayClient(origin: relay, vault: KeychainStore(service: Bundle.main.bundleIdentifier ?? "com.remotecodex.mac"))
             client = api
             guard api.signedIn else { return }
             try await loadPortal(api)
@@ -79,7 +94,7 @@ final class AppState: ObservableObject {
     func signIn() async {
         busy = true; error = nil; defer { busy = false }
         await perform {
-            if !challenge { client = try await RelayClient(origin: relay) }
+            if !challenge { client = try await RelayClient(origin: relay, vault: KeychainStore(service: Bundle.main.bundleIdentifier ?? "com.remotecodex.mac")) }
             guard let api = client else { return }
             let ready = try await (challenge ? api.verify(code: code) : api.login(identifier: identifier, password: password))
             password = ""; code = ""; challenge = !ready
@@ -98,14 +113,17 @@ final class AppState: ObservableObject {
     }
     func refreshPortal() async { await perform { if let client { try await loadPortal(client) } } }
     func signOut() async {
+        guard !hasUnsavedFiles else { error = "Save or close your modified file tabs before signing out."; return }
         if let client { await perform { try await client.logout() } }
         client = nil; authenticated = false; challenge = false
         devices = []; deviceID = nil; workspaces = []; workspaceID = nil
         threads = []; threadID = nil; detail = nil; draft = ""; images = []; drafts = [:]; loadedThread = nil
         pendingSubmissions = [:]
+        fileSessions = [:]; fileWorkspace = nil; history = []; webURL = nil; webCookies = []
     }
     func loadDevice() async {
-        workspaces = []; threads = []; workspaceID = nil; threadID = nil; detail = nil
+        workspaces = []; threads = []; workspaceID = nil; threadID = nil; detail = nil; error = nil; threadError = nil
+        webURL = nil; fileWorkspace = nil; contentMode = "chat"
         guard let api = client, let device = deviceID else { return }
         await perform {
             async let fetchedWorkspaces: [Workspace] = api.device(device, "/api/workspaces")
@@ -119,22 +137,30 @@ final class AppState: ObservableObject {
         if let previous = loadedThread { drafts[previous] = (draft, images) }
         loadedThread = threadID
         let saved = threadID.flatMap { drafts[$0] }
-        draft = saved?.0 ?? ""; images = saved?.1 ?? []; detail = nil
+        draft = saved?.0 ?? ""; images = saved?.1 ?? []; detail = nil; history = []; historyExhausted = false; threadError = nil
+        if threadID != nil { contentMode = "chat" }
         await refreshThread()
     }
     func refreshThread() async {
         guard let api = client, let device = deviceID, let thread = threadID else { return }
-        await perform {
-            let value: ThreadDetail = try await api.device(device, "/api/threads/\(thread)?limit=50")
+        let key = device + "/" + thread
+        guard refreshInFlight.insert(key).inserted else { return }
+        threadLoading = detail == nil
+        defer { refreshInFlight.remove(key); if thread == threadID { threadLoading = false } }
+        do {
+            let value: ThreadDetail = try await api.device(device, "/api/threads/\(thread)?limit=20&view=full")
             guard client === api, device == deviceID, thread == threadID, !Task.isCancelled else { return }
-            detail = value; lastRefresh = Date()
+            mergeHistory(value.turns)
+            detail = value; lastRefresh = Date(); threadError = nil
             if let index = threads.firstIndex(where: { $0.id == thread }) { threads[index] = value.thread }
+        } catch {
+            if client === api, device == deviceID, thread == threadID, !Task.isCancelled { threadError = error.localizedDescription }
         }
     }
     func poll() async {
         while !Task.isCancelled {
             do { try await Task.sleep(for: .seconds(active ? 1 : (NSApp.isActive ? 4 : 15))) } catch { return }
-            await refreshThread()
+            if contentMode == "chat" { await refreshThread() }
         }
     }
     func prepareNewThread() async {

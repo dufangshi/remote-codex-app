@@ -1,6 +1,6 @@
 # Remote Codex for Mac — native preview
 
-An independent macOS 14+ SwiftUI application. The conversation timeline, Markdown/code renderer, composer, image picker, device/workspace navigation and model/reasoning picker are native; no embedded WebView is used.
+An independent macOS 14+ SwiftUI application. Chat, history, file browsing/editing, navigation and model settings are native. An authenticated, same-origin WebKit Full workspace pane provides the advanced web UI inside the app.
 
 ## Build and run
 
@@ -14,7 +14,7 @@ bash scripts/build-app.sh
 open 'build/Remote Codex.app'
 ```
 
-The build script emits a host-architecture `.app` and ZIP in `build/`. Version 0.1.0 is an early native preview, independent of runtime/mobile versions. It is ad-hoc signed by default, **not notarized**. Set `MACOS_SIGNING_IDENTITY` to an available Developer ID identity for signing; notarization and Intel/universal distribution are separate release steps. Do not disable Gatekeeper globally to install the preview.
+The build script emits a host-architecture `.app` and ZIP in `build/`. Version 0.2.0 is a native preview, independent of runtime/mobile versions. It is ad-hoc signed by default, **not notarized**. Set `MACOS_SIGNING_IDENTITY` to an available Developer ID identity for signing; notarization and Intel/universal distribution are separate release steps. Do not disable Gatekeeper globally to install the preview. `APP_NAME` and `BUNDLE_ID` allow an isolated QA bundle without replacing the running app or its Keychain session.
 
 ## Supported workflow
 
@@ -28,7 +28,9 @@ The build script emits a host-architecture `.app` and ZIP in `build/`. Version 0
 
 ## Preview boundaries
 
-Updates are polled every second during a turn and every four seconds while idle (15 seconds when idle in the background). This is not yet a push/WebSocket client. Account security, upstream/harness administration, passkeys/OAuth, thread/workspace-only shares, complex agent questionnaires, history pagination, non-image file artifacts and advanced thread actions open in the normal web browser (which has its own login session). Rich Markdown tables and generated artifact viewers are not yet at web-client parity. Device-wide read-only grants remain enforced by the server; write controls may return a permission error.
+Updates are polled every second during a turn and every four seconds while idle (15 seconds when idle in the background). This is not yet a push/WebSocket client. History supports earlier-turn pagination and deferred tool details. Long messages have a bounded inline preview and a full-text native reader. Native file tabs preserve unsaved edits across navigation and warn before quitting. UTF-8 text up to 4 MB is editable; transport responses are capped at 64 MB. Saving checks the previous remote contents and verifies the result, but the server has no atomic compare-and-swap, so this is not protection against a simultaneous write between the check and save.
+
+Full workspace uses an ephemeral WebKit store with the relay session cookie, not credentials injected into JavaScript. It exposes settings, terminals and advanced thread features using the existing web implementation. External links open in the system browser. Native Markdown is not a complete replacement for rich web renderers. Device-wide read-only grants remain enforced by the server; write controls may return a permission error. macOS 26+ uses Liquid Glass for controls; older systems use material backgrounds.
 
 Device identities are trusted on first encrypted connection and pinned in Keychain per relay/device. An identity change blocks access; verify the new fingerprint using the existing web-client identity workflow, then remove only the matching `identity:<relay>:<device>` generic-password entry under `com.remotecodex.mac` in Keychain Access. A native re-trust flow is intentionally not provided yet. Relay TLS remains part of the first-use trust boundary.
 

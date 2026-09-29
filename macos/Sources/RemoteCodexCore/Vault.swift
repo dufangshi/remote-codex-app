@@ -48,6 +48,9 @@ public final class KeychainStore: SecretStore {
             item[kSecValueData as String] = data
             item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             status = SecItemAdd(item as CFDictionary, nil)
+            if status == errSecDuplicateItem {
+                status = SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+            }
         }
         guard status == errSecSuccess else { throw APIError("Unable to save Keychain entry (\(status)).") }
     }

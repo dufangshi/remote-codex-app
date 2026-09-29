@@ -3,6 +3,7 @@ import RemoteCodexCore
 
 @main
 struct RemoteCodexApp: App {
+    @NSApplicationDelegateAdaptor(NativeAppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
     @AppStorage("appearance") private var appearance = "system"
     var body: some Scene {
@@ -11,7 +12,7 @@ struct RemoteCodexApp: App {
                 .frame(minWidth: 940, minHeight: 640)
                 .tint(Color(red: 0.23, green: 0.39, blue: 0.94))
                 .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
-                .task { await state.restore() }
+                .task { appDelegate.state = state; await state.restore() }
         }
         .defaultSize(width: 1260, height: 820)
         .windowStyle(.automatic)
@@ -21,7 +22,7 @@ struct RemoteCodexApp: App {
                     .keyboardShortcut("n").disabled(state.workspaceID == nil)
             }
             CommandGroup(after: .toolbar) {
-                Button("Refresh") { Task { await state.refreshPortal(); await state.refreshThread() } }
+                Button("Refresh") { Task { await state.refreshPortal(); await state.refreshLists(); await state.refreshThread() } }
                     .keyboardShortcut("r")
                 Button("Open in Browser") { state.openWeb() }.keyboardShortcut("o", modifiers: [.command, .shift])
             }
@@ -38,12 +39,12 @@ struct RemoteCodexApp: App {
                     LabeledContent("Transport", value: "HPKE · AES-256-GCM")
                     Text("Session tokens and device identity pins are stored in macOS Keychain.").font(.caption).foregroundStyle(.secondary)
                 }
-                Section("Native preview") {
-                    Text("Chat updates every second while running, every four seconds while idle, and less often when idle in the background. Account security, provider administration and advanced thread tools are available in the web client.")
-                    Button("Open Web Client") { state.openWeb(settings: true) }
+                Section("Workspace") {
+                    Text("Native chat and file editing use encrypted device connections. The in-app full workspace provides the relay’s advanced settings, terminal and agent tools.")
+                    Button("Open Full Workspace") { state.openFullWorkspace() }
                     Button("Sign Out", role: .destructive) { Task { await state.signOut() } }
                 }
-            }.formStyle(.grouped).frame(width: 480, height: 400)
+            }.formStyle(.grouped).frame(width: 480, height: 460)
                 .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
         }
     }
@@ -52,18 +53,11 @@ struct RemoteCodexApp: App {
 struct RootView: View {
     @EnvironmentObject var state: AppState
     var body: some View {
-        Group {
-            if state.authenticated { WorkspaceView() } else { SignInView() }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if let error = state.error {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text(error).font(.callout).textSelection(.enabled)
-                    Spacer()
-                    Button { state.error = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("Dismiss error")
-                }.padding(12).background(.orange.opacity(0.10))
+        VStack(spacing: 0) {
+            if !state.authenticated, let error = state.error {
+                InlineError(message: error) { state.error = nil }
             }
+            if state.authenticated { WorkspaceView() } else { SignInView() }
         }
     }
 }
@@ -112,6 +106,9 @@ struct SignInView: View {
 
 struct WorkspaceView: View {
     @EnvironmentObject var state: AppState
+    @State private var renaming: ThreadSummary?
+    @State private var deleting: ThreadSummary?
+    @State private var renamedTitle = ""
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
@@ -119,7 +116,7 @@ struct WorkspaceView: View {
                     Image(systemName: "terminal.fill").font(.title2).foregroundStyle(.tint)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Remote Codex").font(.headline)
-                        Text("NATIVE PREVIEW").font(.system(size: 9, weight: .medium)).tracking(1).foregroundStyle(.secondary)
+                        Text("YOUR AGENT WORKSPACE").font(.system(size: 9, weight: .medium)).tracking(1).foregroundStyle(.secondary)
                     }
                     Spacer()
                 }.padding(18)
@@ -168,6 +165,10 @@ struct WorkspaceView: View {
                                 Text(thread.status)
                             }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }.padding(.vertical, 8).tag(thread.id)
+                            .contextMenu {
+                                Button("Rename…") { renamedTitle = thread.title; renaming = thread }
+                                Button("Delete…", role: .destructive) { deleting = thread }.disabled(thread.activeTurnId != nil)
+                            }
                     }
                 }.listStyle(.inset)
                 .overlay {
@@ -179,15 +180,84 @@ struct WorkspaceView: View {
                         .disabled(state.workspaceID == nil).accessibilityIdentifier("newThread")
                 }.navigationSplitViewColumnWidth(min: 240, ideal: 290, max: 390)
         } detail: {
-            ConversationView()
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    Picker("Workspace view", selection: $state.contentMode) {
+                        Label("Chat", systemImage: "bubble.left.and.bubble.right").tag("chat")
+                        Label("Files", systemImage: "folder").tag("files")
+                        Label("Full workspace", systemImage: "square.grid.2x2").tag("web")
+                    }.pickerStyle(.segmented).frame(maxWidth: 420)
+                    Spacer()
+                }.padding(12).controlGlass().padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 6)
+                if let error = state.error { InlineError(message: error) { state.error = nil } }
+                if state.contentMode == "files" {
+                    if let files = state.fileWorkspace { FilesView(files: files).id(files.api.deviceID + files.api.workspaceID) }
+                    else { ContentUnavailableView("Select a workspace", systemImage: "folder") }
+                } else if state.contentMode == "web" {
+                    if let url = state.webURL {
+                        FullWorkspaceView(url: url, cookies: state.webCookies) { state.error = $0 }.id(url.host)
+                    } else { ContentUnavailableView("Select a device", systemImage: "desktopcomputer") }
+                } else { ConversationView().id(state.threadID) }
+            }
         }
         .task(id: state.deviceID) { await state.loadDevice() }
         .task(id: state.threadID) { await state.loadThread(); await state.poll() }
         .onChange(of: state.workspaceID) { _, _ in
+            state.selectWorkspace()
             if !state.visibleThreads.contains(where: { $0.id == state.threadID }) { state.threadID = nil }
         }
+        .onChange(of: state.contentMode) { _, value in if value == "web" { state.openFullWorkspace() } }
         .sheet(isPresented: $state.showingNewThread) { NewThreadView() }
         .sheet(isPresented: $state.showingNewWorkspace) { NewWorkspaceView() }
+        .sheet(isPresented: $state.showingThreadSettings) { ThreadSettingsView() }
+        .sheet(item: $renaming) { thread in
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Rename thread").font(.title2.bold())
+                TextField("Title", text: $renamedTitle).textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("Cancel") { renaming = nil }.keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button("Rename") { Task { await state.renameThread(thread, title: renamedTitle); renaming = nil } }.keyboardShortcut(.defaultAction).disabled(renamedTitle.isEmpty)
+                }
+            }.padding(24).frame(width: 420)
+        }
+        .confirmationDialog("Delete this thread?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("Delete Thread", role: .destructive) { if let thread = deleting { Task { await state.deleteThread(thread) } }; deleting = nil }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { Text("This removes the conversation from Remote Codex. This action cannot be undone.") }
+    }
+}
+
+struct ThreadSettingsView: View {
+    @EnvironmentObject var state: AppState
+    @State private var model = ""
+    @State private var effort = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Conversation model").font(.title2.bold())
+            Picker("Model", selection: $model) {
+                if !state.threadModels.contains(where: { $0.model == model }) { Text(model.isEmpty ? "Loading…" : model).tag(model) }
+                ForEach(state.threadModels) { Text($0.displayName).tag($0.model) }
+            }
+            Picker("Reasoning", selection: $effort) {
+                Text("Auto").tag("")
+                ForEach(state.threadModels.first(where: { $0.model == model })?.supportedReasoningEfforts ?? []) { Text($0.reasoningEffort.capitalized).tag($0.reasoningEffort) }
+            }
+            if let error = state.error { Text(error).font(.caption).foregroundStyle(.red) }
+            HStack {
+                Button("Cancel") { state.showingThreadSettings = false }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Apply") { Task { await state.saveThreadSettings(model: model, effort: effort) } }.disabled(state.busy || model.isEmpty || state.active).buttonStyle(.borderedProminent)
+            }
+        }.padding(24).frame(width: 440)
+            .onAppear {
+                model = state.detail?.thread.model ?? ""
+                let current = state.detail?.thread.reasoningEffort ?? ""
+                effort = current == "auto" ? "" : current
+            }
+            .onChange(of: model) { _, value in
+                if !(state.threadModels.first(where: { $0.model == value })?.supportedReasoningEfforts ?? []).contains(where: { $0.reasoningEffort == effort }) { effort = "" }
+            }
     }
 }
 

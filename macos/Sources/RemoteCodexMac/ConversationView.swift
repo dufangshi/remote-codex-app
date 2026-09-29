@@ -9,11 +9,21 @@ struct ConversationView: View {
             if let detail = state.detail {
                 VStack(spacing: 0) {
                     header(detail)
+                    if let error = state.threadError { InlineError(message: error) { state.threadError = nil } }
                     Divider()
                     ScrollViewReader { proxy in
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 28) {
-                                ForEach(detail.turns) { turn in
+                                if state.hasOlderHistory {
+                                    Button(state.historyLoading ? "Loading earlier turns…" : "Load earlier conversation") {
+                                        let anchor = state.history.first?.id
+                                        Task {
+                                            await state.loadOlderHistory()
+                                            if let anchor { proxy.scrollTo(anchor, anchor: .top) }
+                                        }
+                                    }.disabled(state.historyLoading).frame(maxWidth: .infinity)
+                                }
+                                ForEach(state.history) { turn in
                                     VStack(alignment: .leading, spacing: 18) {
                                         ForEach(turn.items) { item in MessageView(item: item, threadID: detail.thread.id) }
                                         if let error = turn.error { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(.red).font(.callout).textSelection(.enabled) }
@@ -25,7 +35,7 @@ struct ConversationView: View {
                                         }.font(.caption).foregroundStyle(.secondary)
                                     }.id(turn.id)
                                 }
-                                if detail.turns.isEmpty {
+                                if state.history.isEmpty {
                                     ContentUnavailableView("Ready when you are", systemImage: "sparkles", description: Text("Send a message to start working with your agent."))
                                         .frame(maxWidth: .infinity).padding(.top, 70)
                                 }
@@ -33,6 +43,7 @@ struct ConversationView: View {
                                     .onAppear { followLatest = true }.onDisappear { followLatest = false }
                             }.padding(28).frame(maxWidth: 850).frame(maxWidth: .infinity, alignment: .center)
                         }
+                        .onAppear { proxy.scrollTo("latest", anchor: .bottom) }
                         .onChange(of: detail.turns.last?.items.last?.text) { _, _ in
                             if followLatest { proxy.scrollTo("latest", anchor: .bottom) }
                         }
@@ -59,19 +70,27 @@ struct ConversationView: View {
                                     if request.kind.lowercased().contains("approval") {
                                         Button("Deny") { Task { await state.respond(request, allow: false) } }
                                         Button("Allow") { Task { await state.respond(request, allow: true) } }.buttonStyle(.borderedProminent)
-                                    } else { Button("Respond in Browser") { state.openWeb() } }
+                                    } else { Button("Respond in Workspace") { state.openFullWorkspace() } }
                                 }
                             }
                         }.padding(14).background(.orange.opacity(0.08))
                     }
                     composer
                 }.background(Color(nsColor: .textBackgroundColor))
+            } else if let error = state.threadError {
+                ContentUnavailableView {
+                    Label("Couldn’t open conversation", systemImage: "exclamationmark.bubble")
+                } description: { Text(error).textSelection(.enabled) } actions: {
+                    Button("Try Again") { Task { await state.refreshThread() } }.buttonStyle(.borderedProminent)
+                    Button("Open Full Workspace") { state.openFullWorkspace() }
+                }
             } else {
                 ContentUnavailableView(state.threadID == nil ? "Make room for your next idea" : "Opening conversation…", systemImage: "terminal",
                     description: Text(state.threadID == nil ? "Choose a thread or start a new conversation. Your devices do the work; your Mac brings it together." : "Establishing an encrypted device connection."))
             }
         }
         .toolbar {
+            Button { Task { await state.prepareThreadSettings() } } label: { Label("Model Settings", systemImage: "slider.horizontal.3") }.disabled(state.detail == nil)
             Button { state.openWeb() } label: { Label("Open in Browser", systemImage: "arrow.up.right.square") }.help("Advanced thread actions in web client")
             Button { Task { await state.refreshThread() } } label: { Label("Refresh Thread", systemImage: "arrow.clockwise") }
         }
@@ -126,15 +145,19 @@ struct ConversationView: View {
                     .disabled(state.sending || (state.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.images.isEmpty))
                     .accessibilityIdentifier("sendMessage")
             }
-        }.padding(16).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
+        }.padding(16).controlGlass()
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(.primary.opacity(0.08)))
             .padding(.horizontal, 24).padding(.bottom, 20).padding(.top, 10)
     }
 }
 
 struct MessageView: View {
+    @EnvironmentObject var state: AppState
     let item: HistoryItem
     let threadID: String
+    @State private var expanded = false
+    @State private var fetched: HistoryItem?
+    @State private var failure: String?
     private var isUser: Bool { ["userMessage", "user"].contains(item.kind) }
     private var isMessage: Bool { isUser || ["agentMessage", "assistantMessage", "assistant"].contains(item.kind) }
     var body: some View {
@@ -151,15 +174,22 @@ struct MessageView: View {
         } else if item.kind == "image", let path = item.assetPath ?? item.detailText {
             NativeImage(path: path, threadID: threadID)
         } else {
-            DisclosureGroup {
-                Text(item.detailText ?? item.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+            DisclosureGroup(isExpanded: $expanded) {
+                MarkdownContent(text: fetched?.detailText ?? fetched?.text ?? item.detailText ?? item.text)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
+                if let failure { Text(failure).font(.caption).foregroundStyle(.red) }
             } label: {
                 Label {
                     Text(item.previewText ?? item.text.components(separatedBy: .newlines).first ?? item.kind).lineLimit(2)
                 } icon: { Image(systemName: item.kind.lowercased().contains("reason") ? "brain" : "terminal") }
                     .font(.callout).foregroundStyle(.secondary)
             }.padding(12).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+                .task(id: expanded) {
+                    if expanded, fetched == nil {
+                        do { fetched = try await state.itemDetail(thread: threadID, item: item.id) }
+                        catch { if !Task.isCancelled { failure = error.localizedDescription } }
+                    }
+                }
         }
     }
 }
@@ -188,8 +218,10 @@ struct NativeImage: View {
 
 struct MarkdownContent: View {
     let text: String
+    @State private var showingFullText = false
     var body: some View {
-        let pieces = text.components(separatedBy: "```")
+        let preview = String(text.prefix(16_000))
+        let pieces = preview.components(separatedBy: "```")
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(pieces.enumerated()), id: \.offset) { index, piece in
                 if index % 2 == 1 {
@@ -212,6 +244,20 @@ struct MarkdownContent: View {
                         .font(.body).lineSpacing(5).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            if text.count > 16_000 {
+                Button("Read full message (\(text.count.formatted()) characters)") { showingFullText = true }
+            }
+        }
+        .sheet(isPresented: $showingFullText) {
+            VStack {
+                HStack {
+                    Text("Full message").font(.headline)
+                    Spacer()
+                    Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+                    Button("Done") { showingFullText = false }.keyboardShortcut(.cancelAction)
+                }
+                NativeComposer(text: .constant(text), code: true, readOnly: true, identifier: "fullMessage") {}
+            }.padding(20).frame(minWidth: 700, minHeight: 520)
         }
     }
 }

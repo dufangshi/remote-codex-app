@@ -9,6 +9,24 @@ final class MemoryVault: SecretStore {
 }
 
 final class TransportTests: XCTestCase {
+    func testContinuationAcceptsOnlyScopedSequentialChunks() throws {
+        let id = "89b047e5-6e45-45d8-90f6-99607cb1fe16"
+        let prefix = "/api/threads/\(id)/transport/stream/"
+        var stream = Continuation(path: "/api/threads/\(id)?limit=20")
+        try stream.accept(prefix + "opaque_token-1?chunk=1")
+        try stream.accept(prefix + "opaque_token-1?chunk=2")
+        for bad in [prefix + "opaque_token-1?chunk=2", prefix + "opaque_token-1?chunk=4", prefix + "other?chunk=3",
+                    prefix + "opaque_token-1?chunk=3&url=https://example.com", prefix + "opaque_token-1?chunk=3#fragment",
+                    "/api/transport/stream/opaque_token-1?chunk=3", prefix + "../escape?chunk=3",
+                    prefix + "%2e%2e?chunk=3", "https://example.com" + prefix + "opaque_token-1?chunk=3"] {
+            XCTAssertThrowsError(try stream.accept(bad), bad)
+        }
+        try stream.accept(prefix + "opaque_token-1?chunk=3")
+        var workspace = Continuation(path: "/api/workspaces/\(id)/files/raw?path=test.txt")
+        try workspace.accept("/api/workspaces/\(id)/transport/stream/file-token?chunk=1")
+        var collection = Continuation(path: "/api/threads")
+        try collection.accept("/api/transport/stream/list-token?chunk=1")
+    }
     @MainActor func testOriginsAreBoundAndSecure() throws {
         XCTAssertEqual(try RelayClient.normalizedOrigin("relay.example.com/").absoluteString, "https://relay.example.com")
         XCTAssertEqual(try RelayClient.normalizedOrigin("http://127.0.0.1:18790").port, 18790)
@@ -113,6 +131,42 @@ final class TransportTests: XCTestCase {
         imageQuery.queryItems = [URLQueryItem(name: "path", value: photo)]
         let returned = try await client.deviceData(fixture.deviceId, "/api/threads/\(created.id)/assets/image?" + (imageQuery.percentEncodedQuery ?? ""))
         XCTAssertEqual(returned, png)
+        // Exercise actual multi-chunk encrypted responses, not just tiny synthetic transcripts.
+        let files = WorkspaceAPI(client: client, deviceID: fixture.deviceId, workspaceID: fixture.workspaceId)
+        let filename = "native-\(UUID().uuidString)-中文..txt"
+        let largeText = String(repeating: "Encrypted native workspace regression.\n", count: 70_000)
+        try await files.create(filename, content: largeText)
+        let downloaded = try await files.read(filename)
+        XCTAssertEqual(downloaded, Data(largeText.utf8))
+        let tree = try await files.tree()
+        XCTAssertTrue(tree.children?.contains { $0.name == filename } == true)
+        let edited = try await files.save(filename, content: "saved from native editor\n", original: downloaded)
+        XCTAssertEqual(edited, Data("saved from native editor\n".utf8))
+        do { _ = try await files.save(filename, content: "stale overwrite", original: downloaded); XCTFail("Conflicting edit was accepted") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("changed on the device")) }
+        let stillSaved = try await files.read(filename)
+        XCTAssertEqual(stillSaved, edited)
+        do { try await files.create(filename); XCTFail("Existing file was overwritten") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("already exists")) }
+
+        let longPrompt = String(repeating: "long history line\n", count: 70_000)
+        let longBody = try PromptBody.build(text: longPrompt, requestID: UUID().uuidString, images: [])
+        _ = try await client.deviceData(fixture.deviceId, "/api/threads/\(created.id)/prompt", method: "POST", body: longBody.body)
+        for _ in 0..<40 {
+            detail = try await client.device(fixture.deviceId, "/api/threads/\(created.id)?limit=1&view=full")
+            if detail.thread.activeTurnId == nil, detail.turns.last?.items.contains(where: { $0.text == longPrompt }) == true { break }
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertTrue(detail.turns.flatMap(\.items).contains { $0.text == longPrompt })
+        let lastTurn = try XCTUnwrap(detail.turns.first)
+        let earlier: ThreadDetail = try await client.device(fixture.deviceId, "/api/threads/\(created.id)?limit=1&beforeTurnId=\(lastTurn.id)&view=full")
+        XCTAssertEqual(earlier.turns.count, 1)
+        XCTAssertNotEqual(earlier.turns.first?.id, lastTurn.id)
+        XCTAssertGreaterThanOrEqual(earlier.totalTurnCount ?? 0, 3)
+        let modelChanged: ThreadSummary = try await client.device(fixture.deviceId, "/api/threads/\(created.id)/settings", method: "PATCH", body: ["reasoningEffort": "high"])
+        XCTAssertEqual(modelChanged.reasoningEffort, "high")
+        let auto: ThreadSummary = try await client.device(fixture.deviceId, "/api/threads/\(created.id)/settings", method: "PATCH", body: ["reasoningEffort": "auto"])
+        XCTAssertEqual(auto.reasoningEffort, "auto")
         let pin = "identity:\(client.origin.absoluteString):\(fixture.deviceId)"
         XCTAssertNotNil(vault.values[pin])
         vault.values[pin] = "changed-identity"

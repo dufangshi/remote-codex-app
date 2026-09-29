@@ -73,7 +73,14 @@ public final class RelayClient {
     private let redirects = NoRedirects()
     private var token: String?
     private var keys: [String: (KeyDescriptor, Double)] = [:]
+    private var keyRequests: [String: Task<(KeyDescriptor, Double), Error>] = [:]
     public var signedIn: Bool { token != nil }
+    public func browserCookies() -> [HTTPCookie] {
+        guard let token, let host = origin.host else { return [] }
+        var properties: [HTTPCookiePropertyKey: Any] = [.name: "remote_codex_relay_session", .value: token, .domain: host, .path: "/", HTTPCookiePropertyKey("HttpOnly"): "TRUE"]
+        if origin.scheme == "https" { properties[.secure] = "TRUE" }
+        return HTTPCookie(properties: properties).map { [$0] } ?? []
+    }
 
     public static func normalizedOrigin(_ text: String) throws -> URL {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -134,7 +141,7 @@ public final class RelayClient {
         return data
     }
     private func request(_ path: String, method: String) throws -> URLRequest {
-        guard path.hasPrefix("/"), !path.hasPrefix("//"), !path.contains(".."),
+        guard path.hasPrefix("/"), !path.hasPrefix("//"),
               let url = URL(string: origin.absoluteString + path), url.host == origin.host else {
             throw APIError("Invalid relay request path.")
         }
@@ -160,6 +167,13 @@ public final class RelayClient {
     }
     private func key(_ device: String) async throws -> (KeyDescriptor, Double) {
         if let cached = keys[device], cached.0.expiresAt > Date().timeIntervalSince1970 * 1000 + cached.1 + 60_000 { return cached }
+        if let pending = keyRequests[device] { return try await pending.value }
+        let pending = Task { try await self.fetchKey(device) }
+        keyRequests[device] = pending
+        defer { keyRequests.removeValue(forKey: device) }
+        return try await pending.value
+    }
+    private func fetchKey(_ device: String) async throws -> (KeyDescriptor, Double) {
         let challenge = UUID().uuidString.lowercased()
         let descriptor: KeyDescriptor = try await relay("/relay/devices/\(device)/api/transport/key?challenge=\(challenge)")
         try descriptor.verify(challenge: challenge)
@@ -174,15 +188,14 @@ public final class RelayClient {
     }
     public func deviceData(_ device: String, _ path: String, method: String = "GET", body: Data = Data(),
                            contentType: String = "application/json") async throws -> Data {
-        guard UUID(uuidString: device) != nil, path.hasPrefix("/api/"), !path.contains("..") else { throw APIError("Invalid device route.") }
+        guard UUID(uuidString: device) != nil, path.hasPrefix("/api/"),
+              let route = URLComponents(string: path), route.scheme == nil, route.host == nil, route.fragment == nil,
+              !route.path.split(separator: "/").contains("..") else { throw APIError("Invalid device route.") }
         var (metadata, data) = try await exchange(device, path, method: method, body: body, contentType: contentType)
-        let segments = path.split(separator: "?")[0].split(separator: "/")
-        let prefix = segments.count >= 3 && ["threads", "workspaces"].contains(String(segments[1])) && UUID(uuidString: String(segments[2])) != nil
-            ? "/api/\(segments[1])/\(segments[2])" : "/api"
-        var seen = Set<String>()
+        var continuation = Continuation(path: path)
         while let next = metadata["streamNext"] as? String {
-            guard next.hasPrefix(prefix + "/transport/stream/"), !next.contains(".."), !next.contains("?"), seen.insert(next).inserted,
-                  seen.count < 1024 else { throw APIError("Invalid encrypted continuation scope.") }
+            try Task.checkCancellation()
+            try continuation.accept(next)
             let result = try await exchange(device, next, method: "GET", body: Data(), contentType: contentType)
             metadata = result.0; data.append(result.1)
             guard data.count <= Packet.limit else { throw APIError("Device response exceeds 64 MB.") }
