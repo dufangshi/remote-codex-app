@@ -42,18 +42,7 @@ struct FilesView: View {
                     }.padding(10)
                     List {
                         ForEach(files.nodes.filter { files.filter.isEmpty || $0.name.localizedCaseInsensitiveContains(files.filter) }) { node in
-                            Button { Task { await files.open(node) } } label: {
-                                HStack(spacing: 9) {
-                                    Image(systemName: node.isDirectory ? "folder.fill" : "doc.text").foregroundStyle(node.isDirectory ? Color.accentColor : Color.secondary)
-                                    Text(node.name).lineLimit(1)
-                                    Spacer()
-                                    if node.isDirectory { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
-                                }.padding(.vertical, 4).contentShape(Rectangle())
-                            }.buttonStyle(.plain).accessibilityIdentifier("file-" + node.name)
-                                .contextMenu {
-                                    if !node.isDirectory { Button("Download…") { Task { await files.download(node.path) } } }
-                                    Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(node.path, forType: .string) }
-                                }
+                            FileRow(node: node, files: files)
                         }
                     }.listStyle(.inset).scrollContentBackground(.hidden).background(Palette.chrome)
                 }.frame(minWidth: 180, idealWidth: 220, maxWidth: 300)
@@ -93,6 +82,32 @@ struct FilesView: View {
             Button("Discard Changes", role: .destructive) { if let doc = files.closing { files.close(doc, discard: true) } }
             Button("Cancel", role: .cancel) { files.closing = nil }
         } message: { Text(files.closing?.id ?? "") }
+    }
+}
+
+private struct FileRow: View {
+    let node: FileNode
+    @ObservedObject var files: WorkspaceFiles
+    @State private var hovered = false
+    var body: some View {
+        HStack(spacing: 9) {
+            Button { Task { await files.open(node) } } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: node.isDirectory ? "folder.fill" : "doc.text").foregroundStyle(node.isDirectory ? Color.accentColor : Color.secondary)
+                    Text(node.name).lineLimit(1)
+                }
+            }.buttonStyle(.plain).accessibilityIdentifier("file-" + node.name)
+            Spacer()
+            if hovered {
+                Button { Task { await files.download(node.path, isDirectory: node.isDirectory) } } label: { Image(systemName: "arrow.down.circle") }
+                    .buttonStyle(.plain).foregroundStyle(Palette.muted).help("Download " + node.name).accessibilityLabel("Download " + node.name)
+            }
+            if node.isDirectory { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
+        }.padding(.vertical, 4).contentShape(Rectangle()).onHover { hovered = $0 }
+            .contextMenu {
+                Button("Download…") { Task { await files.download(node.path, isDirectory: node.isDirectory) } }
+                Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(node.path, forType: .string) }
+            }
     }
 }
 

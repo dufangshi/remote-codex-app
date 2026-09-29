@@ -20,6 +20,16 @@ public struct WorkspaceAPI {
     public func read(_ path: String) async throws -> Data {
         try await client.deviceData(deviceID, route("raw", path: path))
     }
+    /// Streams a file, or a zipped directory archive, from the workspace `download` route.
+    public func download(_ path: String) async throws -> Data {
+        try await client.deviceData(deviceID, route("download", path: path))
+    }
+    /// The response carries no accessible Content-Disposition (it's inside the HPKE envelope),
+    /// so the save-panel filename is derived client-side instead.
+    public nonisolated static func downloadFilename(for path: String, isDirectory: Bool) -> String {
+        let name = path.isEmpty || path == "." ? "workspace" : (path as NSString).lastPathComponent
+        return isDirectory ? name + ".zip" : name
+    }
     /// The existing API does not offer atomic compare-and-swap. Refuse a known
     /// conflicting remote edit before PUT, and verify persisted bytes afterwards.
     public func save(_ path: String, content: String, original: Data) async throws -> Data {

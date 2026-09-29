@@ -35,4 +35,9 @@ final class ExplorerTests: XCTestCase {
         XCTAssertTrue(CodeSyntax.tokens("const plain = 42", path: "notes.txt").isEmpty)
         XCTAssertTrue(CodeSyntax.tokens(String(repeating: "x", count: CodeSyntax.maximumUTF16Length + 1), path: "large.ts").isEmpty)
     }
+    func testDownloadFilenameAppendsZipOnlyForDirectories() {
+        XCTAssertEqual(WorkspaceAPI.downloadFilename(for: "notes.txt", isDirectory: false), "notes.txt")
+        XCTAssertEqual(WorkspaceAPI.downloadFilename(for: "apps/web", isDirectory: true), "web.zip")
+        XCTAssertEqual(WorkspaceAPI.downloadFilename(for: ".", isDirectory: true), "workspace.zip")
+    }
 }

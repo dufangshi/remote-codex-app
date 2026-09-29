@@ -110,10 +110,10 @@ final class WorkspaceFiles: ObservableObject {
         do { try (doc.editable ? Data(doc.text.utf8) : doc.original).write(to: url, options: .atomic) }
         catch { self.error = error.localizedDescription }
     }
-    func download(_ path: String) async {
-        let panel = NSSavePanel(); panel.nameFieldStringValue = (path as NSString).lastPathComponent
+    func download(_ path: String, isDirectory: Bool = false) async {
+        let panel = NSSavePanel(); panel.nameFieldStringValue = WorkspaceAPI.downloadFilename(for: path, isDirectory: isDirectory)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { let bytes = try await api.read(path); try bytes.write(to: url, options: .atomic) }
+        do { let bytes = try await api.download(path); try bytes.write(to: url, options: .atomic) }
         catch { self.error = error.localizedDescription }
     }
 }
