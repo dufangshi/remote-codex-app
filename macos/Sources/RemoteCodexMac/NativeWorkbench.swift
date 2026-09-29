@@ -9,7 +9,6 @@ struct NativeWorkbench: View {
     @State private var notifications = false
     @State private var shortcutsExpanded = true
     @State private var recentExpanded = true
-    @State private var webAction = "Share as link"
     var body: some View {
         Group {
         if state.page != "conversation" { PortalPages() }
@@ -42,9 +41,13 @@ struct NativeWorkbench: View {
             }
             .sheet(isPresented: $state.showingNewThread) { NewThreadView() }
             .sheet(isPresented: $state.showingNewWorkspace) { NewWorkspaceView() }
-            .overlay {
-                if state.showingSettings { SharedSettingsView(close: { state.showingSettings = false }) }
-                else if state.showingShare { SharedSettingsView(action: webAction, close: { state.showingShare = false }) }
+            .sheet(isPresented: $state.showingSettings) { AppSettingsView() }
+            .sheet(item: $state.activeShareSheet) { sheet in
+                switch sheet {
+                case .link: ThreadShareLinkView()
+                case .permissions: ThreadSharingPermissionsView()
+                case .transcript: ThreadTranscriptExportView()
+                }
             }
             .sheet(item: $renaming) { thread in
                 VStack(alignment: .leading, spacing: 20) {
@@ -55,7 +58,7 @@ struct NativeWorkbench: View {
                         Spacer()
                         Button("Rename") { Task { await state.renameThread(thread, title: title); renaming = nil } }.keyboardShortcut(.defaultAction)
                     }
-                }.padding(28).frame(width: 420).background(Palette.panel)
+                }.padding(28).frame(width: 420).glassBar()
             }
             .confirmationDialog("Delete this thread?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
                 Button("Delete Thread", role: .destructive) { if let thread = deleting { Task { await state.deleteThread(thread) } }; deleting = nil }
@@ -219,9 +222,9 @@ struct NativeWorkbench: View {
                 Task { await state.recordVisit(favorite: !favorite) }
             }
             Spacer()
-            IconButton(title: "Share as link", icon: "link") { webAction = "Share as link"; state.showingShare = true }
-            IconButton(title: "Sharing permissions", icon: "person.2") { webAction = "Sharing permissions"; state.showingShare = true }
-            IconButton(title: "Download transcript", icon: "arrow.down.to.line") { webAction = "Download transcript"; state.showingShare = true }
+            IconButton(title: "Share as link", icon: "link") { state.activeShareSheet = .link }
+            IconButton(title: "Sharing permissions", icon: "person.2") { state.activeShareSheet = .permissions }
+            IconButton(title: "Download transcript", icon: "arrow.down.to.line") { state.activeShareSheet = .transcript }
             Menu {
                 Button("Model and reasoning…") { Task { await state.prepareThreadSettings() } }
                 Button("Copy Remote Codex session ID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(state.threadID ?? "", forType: .string) }

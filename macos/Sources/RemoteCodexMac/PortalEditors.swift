@@ -1,10 +1,22 @@
 import SwiftUI
 import RemoteCodexCore
 
+struct ThreadShareTarget {
+    let deviceId: String
+    let threadId: String
+    let threadTitle: String?
+    let workspaceId: String?
+    let workspaceLabel: String?
+}
+
 struct AccessEditor: View {
     let device: Device?
+    let thread: ThreadShareTarget?
     let grant: Grant?
     let isShare: Bool
+    init(device: Device? = nil, thread: ThreadShareTarget? = nil, grant: Grant?, isShare: Bool) {
+        self.device = device; self.thread = thread; self.grant = grant; self.isShare = isShare
+    }
     @EnvironmentObject var state: AppState
     @Environment(\.dismiss) var dismiss
     @State private var target = ""
@@ -15,17 +27,21 @@ struct AccessEditor: View {
     @State private var expires = ""
     @State private var failure: String?
     @State private var busy = false
+    private var title: String { device != nil ? "Share device" : thread != nil ? "Invite someone" : "Edit shared access" }
+    private var primaryLabel: String { device != nil ? "Share device" : thread != nil ? "Invite" : "Save permissions" }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(device == nil ? "Edit shared access" : "Share device").font(.title2)
-            if let device { Text(device.name).foregroundStyle(Palette.muted); TextField("Username or email", text: $target) }
+            Text(title).font(.title2)
+            if let device { Text(device.name).foregroundStyle(Palette.muted) }
+            if let thread { Text(thread.threadTitle?.isEmpty == false ? thread.threadTitle! : "This thread").foregroundStyle(Palette.muted) }
+            if device != nil || thread != nil { TextField("Username or email", text: $target) }
             TextField("Label (optional)", text: $label)
             Picker("Thread access", selection: $threadAccess) { Text("View only").tag("read"); Text("Collaborator").tag("control") }
             Picker("Workspace access", selection: $workspaceAccess) { Text("No workspace").tag("none"); Text("Workspace read").tag("read"); Text("Workspace write").tag("write") }.disabled(grant?.scope == "thread" && grant?.workspaceId == nil)
             if device != nil || (!isShare && grant?.scope != "thread") { Toggle("Allow creating threads", isOn: $createThreads) }
             if grant != nil { TextField("Expires at (ISO 8601, blank for no expiry)", text: $expires) }
             if let failure { Text(failure).foregroundStyle(.red) }
-            HStack { Button("Cancel") { dismiss() }; Spacer(); Button(device == nil ? "Save permissions" : "Share device") { Task { await save() } }.disabled(busy || (device != nil && target.isEmpty)) }
+            HStack { Button("Cancel") { dismiss() }; Spacer(); Button(primaryLabel) { Task { await save() } }.disabled(busy || ((device != nil || thread != nil) && target.isEmpty)) }
         }.textFieldStyle(.roundedBorder).padding(28).frame(width: 480).glassBar()
             .onAppear { if let grant { label = grant.label ?? ""; threadAccess = grant.threadAccess ?? "read"; workspaceAccess = grant.workspaceAccess ?? "none"; createThreads = grant.canCreateThreads ?? false; expires = grant.expiresAt ?? "" } }
     }
@@ -33,17 +49,27 @@ struct AccessEditor: View {
         guard let api = state.client else { return }; busy = true; defer { busy = false }
         do {
             struct Reply: Decodable {}
-            var body: [String: Any] = ["label": label.isEmpty ? NSNull() : label as Any, "threadAccess": threadAccess, "workspaceAccess": workspaceAccess, "canCreateThreads": createThreads]
+            var body: [String: Any] = ["label": label.isEmpty ? NSNull() : label as Any, "threadAccess": threadAccess, "workspaceAccess": workspaceAccess]
             let route: String
+            let method: String
             if let device {
-                route = "/relay/grants"; body.merge(["deviceId": device.id, "targetIdentifier": target, "scope": "device", "workspaceScope": "all", "workspaceIds": [String]()]) { _, v in v }
+                route = "/relay/grants"; method = "POST"
+                body.merge(["deviceId": device.id, "targetIdentifier": target, "scope": "device", "workspaceScope": "all", "workspaceIds": [String](), "canCreateThreads": createThreads]) { _, v in v }
+            } else if let thread {
+                route = "/relay/shares"; method = "POST"
+                body.merge([
+                    "deviceId": thread.deviceId, "threadId": thread.threadId, "targetIdentifier": target,
+                    "threadTitle": (thread.threadTitle as Any?) ?? NSNull(),
+                    "workspaceId": workspaceAccess == "none" ? NSNull() : ((thread.workspaceId as Any?) ?? NSNull()),
+                    "workspaceLabel": workspaceAccess == "none" ? NSNull() : ((thread.workspaceLabel as Any?) ?? NSNull()),
+                ]) { _, v in v }
             } else if let grant {
-                route = "/relay/\(isShare ? "shares" : "grants")/\(grant.id)"
+                route = "/relay/\(isShare ? "shares" : "grants")/\(grant.id)"; method = "PATCH"
                 body["workspaceId"] = grant.workspaceId as Any? ?? NSNull()
                 body["workspaceScope"] = grant.workspaceScope ?? "all"; body["workspaceIds"] = grant.workspaceIds ?? []
                 body["expiresAt"] = expires.isEmpty ? NSNull() : expires as Any
             } else { return }
-            let _: Reply = try await api.relay(route, method: device == nil ? "PATCH" : "POST", body: body)
+            let _: Reply = try await api.relay(route, method: method, body: body)
             await state.refreshPortal(); dismiss()
         } catch { failure = error.localizedDescription }
     }

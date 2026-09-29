@@ -176,6 +176,12 @@ public final class RelayClient {
         let data = try await raw(path, method: method, body: try body.map { try JSONSerialization.data(withJSONObject: $0) })
         return try JSONDecoder().decode(T.self, from: data)
     }
+    /// For endpoints that reply 204 No Content - JSONDecoder rejects a zero-byte body
+    /// even for an empty struct, so callers that don't need the response use this instead.
+    @discardableResult
+    public func relayVoid(_ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
+        try await raw(path, method: method, body: try body.map { try JSONSerialization.data(withJSONObject: $0) })
+    }
     public func device<T: Decodable>(_ id: String, _ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> T {
         let bytes = try body.map { try JSONSerialization.data(withJSONObject: $0) } ?? Data()
         let data = try await deviceData(id, path, method: method, body: bytes)

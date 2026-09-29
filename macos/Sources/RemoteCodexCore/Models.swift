@@ -177,3 +177,22 @@ public struct WorkbenchNotification: Decodable, Identifiable {
     public let href: String
     public let occurredAt: String
 }
+public struct ExportTurnSummary: Decodable, Identifiable {
+    public let turnId: String
+    public let turnNumber: Int
+    public let startedAt: String?
+    public let status: String
+    public let userPromptPreview: String?
+    public var id: String { turnId }
+}
+public struct ExportTurnsResponse: Decodable {
+    public let turns: [ExportTurnSummary]
+    public let totalTurnCount: Int
+}
+public struct CreatePublicationResult: Decodable { public let token: String }
+public struct ThreadPublicLink: Decodable, Identifiable {
+    public let id: String
+    public let createdAt: String
+    public let turnCount: Int
+    public let live: Bool?
+}

@@ -18,6 +18,7 @@ struct AgentChoice: Identifiable {
     let agentId: String?
     let displayName: String
 }
+enum ShareSheet: String, Identifiable { case link, permissions, transcript; var id: String { rawValue } }
 
 @MainActor
 final class AppState: ObservableObject {
@@ -68,7 +69,7 @@ final class AppState: ObservableObject {
     @Published var page = "conversation"
     @Published var portal: Portal?
     @Published var showingTools = false
-    @Published var showingShare = false
+    @Published var activeShareSheet: ShareSheet?
     @Published var pinnedThreads = Set(UserDefaults.standard.stringArray(forKey: "native-pinned-threads") ?? [])
     @Published var showingThreadSettings = false
     @Published var notificationStatus = "Checking macOS notifications…"

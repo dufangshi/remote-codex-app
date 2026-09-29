@@ -40,6 +40,23 @@ final class TransportTests: XCTestCase {
         XCTAssertNotNil(NotificationCursor.destination(fresh.href, origin: origin))
         for href in ["https://evil.example" + fresh.href, "file:///etc/passwd", "/devices/not-a-uuid/threads/wrong", fresh.href + "?token=secret"] { XCTAssertNil(NotificationCursor.destination(href, origin: origin)) }
     }
+    func testShareAndExportDTOsDecodeTheServerContract() throws {
+        let turns = try JSONDecoder().decode(ExportTurnsResponse.self, from: JSONSerialization.data(withJSONObject: [
+            "turns": [["turnId": "t1", "turnNumber": 1, "startedAt": "2026-09-28T00:00:00Z", "status": "completed", "userPromptPreview": "Hello"],
+                      ["turnId": "t2", "turnNumber": 2, "startedAt": NSNull(), "status": "completed", "userPromptPreview": NSNull()]],
+            "totalTurnCount": 2,
+        ]))
+        XCTAssertEqual(turns.turns.map(\.id), ["t1", "t2"])
+        XCTAssertEqual(turns.turns[1].userPromptPreview, nil)
+        XCTAssertEqual(turns.totalTurnCount, 2)
+        let publication = try JSONDecoder().decode(CreatePublicationResult.self, from: JSONSerialization.data(withJSONObject: ["token": "abc123", "snapshot": ["turns": []]]))
+        XCTAssertEqual(publication.token, "abc123")
+        let links = try JSONDecoder().decode([ThreadPublicLink].self, from: JSONSerialization.data(withJSONObject: [
+            ["id": "link1", "createdAt": "2026-09-28T00:00:00Z", "turnCount": 3, "live": true],
+        ]))
+        XCTAssertEqual(links.first?.id, "link1")
+        XCTAssertEqual(links.first?.live, true)
+    }
     func testRemoteFileLinksNeverTargetTheLocalHost() throws {
         XCTAssertEqual(try RemoteFileLink.path("file:///home/device/project/docs/guide.md#L12", root: "/home/device/project"), "docs/guide.md")
         XCTAssertEqual(try RemoteFileLink.path("../README.md", root: "/home/device/project", document: "docs/start.md"), "README.md")

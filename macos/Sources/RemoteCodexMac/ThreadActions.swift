@@ -50,13 +50,21 @@ extension AppState {
         guard parts.count == 4, parts[0] == "devices", parts[2] == "threads" else { error = "Unknown notification destination."; return }
         selectReference(String(parts[1]), String(parts[3]))
     }
-    func exportTranscript() async {
+    func exportTranscript(mode: String = "latest", limit: Int? = 100, turnIds: [String] = [], includeTokenAndPrice: Bool = true) async {
         guard let api = client, let device = deviceID, let thread = threadID else { return }
         await perform {
-            let bytes = try await api.deviceData(device, "/api/threads/\(thread)/exports/html?limit=100")
+            var query = URLComponents()
+            query.queryItems = [URLQueryItem(name: "mode", value: mode), URLQueryItem(name: "includeTokenAndPrice", value: String(includeTokenAndPrice))]
+            if let limit { query.queryItems?.append(URLQueryItem(name: "limit", value: String(limit))) }
+            if !turnIds.isEmpty { query.queryItems?.append(URLQueryItem(name: "turnIds", value: turnIds.joined(separator: ","))) }
+            let bytes = try await api.deviceData(device, "/api/threads/\(thread)/exports/html?" + (query.percentEncodedQuery ?? ""))
             let panel = NSSavePanel(); panel.nameFieldStringValue = "remote-codex-transcript.html"
             if panel.runModal() == .OK, let url = panel.url { try bytes.write(to: url, options: .atomic) }
         }
+    }
+    func exportTurns() async throws -> ExportTurnsResponse {
+        guard let api = client, let device = deviceID, let thread = threadID else { throw APIError("Choose a conversation.") }
+        return try await api.device(device, "/api/threads/\(thread)/export-turns")
     }
     func fork(turn: String) async {
         guard !busy, let api = client, let device = deviceID, let thread = threadID else { return }
