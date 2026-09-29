@@ -27,7 +27,7 @@ struct TraceGroupView: View {
         VStack(alignment: .leading, spacing: 8) {
             Button { expanded.toggle() } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: command ? "square.stack" : "wrench.and.screwdriver").frame(width: 28, height: 28).overlay(RoundedRectangle(cornerRadius: 7).stroke(Palette.border))
+                    Image(systemName: command ? "terminal" : "wrench").frame(width: 28, height: 28).overlay(RoundedRectangle(cornerRadius: 7).stroke(Palette.border))
                     Text("\(command ? "Ran" : "Used") \(items.count) \(command ? "commands" : "tool calls")")
                     Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 11))
                 }.contentShape(Rectangle())

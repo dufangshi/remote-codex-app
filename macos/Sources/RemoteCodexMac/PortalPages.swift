@@ -123,7 +123,9 @@ struct PortalPages: View {
                             if copied == device.id { Text("Setup command copied.").foregroundStyle(Palette.accent) }
                         }.font(.system(size: 12)).foregroundStyle(Palette.muted).frame(maxWidth: .infinity, alignment: .leading)
                         HStack {
-                            Button("Connect") { state.deviceID = device.id; state.page = "workspaces" }.buttonStyle(WorkbenchButton(selected: true)).disabled(device.connected != true && device.hostedStatus != "stopped")
+                            Button("Connect") { state.deviceID = device.id; state.page = "workspaces" }.buttonStyle(WorkbenchButton(selected: true))
+                                .disabled(device.connected != true && device.hostedStatus != "stopped")
+                                .help(device.connected != true && device.hostedStatus != "stopped" ? "Device is offline. Start the supervisor on that device, then try again." : "Connect to this device")
                             Menu {
                                 Button("Copy setup for macOS/Linux") { Task { await setup(device, windows: false) } }
                                 Button("Copy setup for Windows") { Task { await setup(device, windows: true) } }

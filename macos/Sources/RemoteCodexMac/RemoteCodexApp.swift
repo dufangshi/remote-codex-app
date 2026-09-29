@@ -34,6 +34,7 @@ struct RemoteCodexApp: App {
                 Button("Search Conversation") { state.showingSearch.toggle() }.keyboardShortcut("f")
                 Button("Toggle Sidebar") { state.showingSidebar.toggle() }.keyboardShortcut("s", modifiers: [.command, .control])
                 Button("Files") { state.contentMode = state.contentMode == "files" ? "chat" : "files" }.keyboardShortcut("e", modifiers: [.command, .shift])
+                Button("Terminal") { state.contentMode = state.contentMode == "terminal" ? "chat" : "terminal" }.keyboardShortcut("t", modifiers: [.command, .shift])
                 Button("Refresh") { Task { await state.refreshLists(); await state.refreshThread() } }.keyboardShortcut("r")
                 Button("Open in Browser") { state.openWeb() }.keyboardShortcut("o", modifiers: [.command, .shift])
             }

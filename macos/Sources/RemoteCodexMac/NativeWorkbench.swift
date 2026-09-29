@@ -64,7 +64,7 @@ struct NativeWorkbench: View {
     }
     private var activityRail: some View {
         VStack(spacing: 18) {
-            IconButton(title: "Remote Codex home", icon: "terminal") { state.page = "workspaces" }
+            IconButton(title: "Remote Codex home", icon: "house") { state.page = "workspaces" }
             IconButton(title: "Chat", icon: "bubble.left", selected: state.contentMode == "chat") { state.page = "conversation"; state.contentMode = "chat" }
             IconButton(title: "Terminal", icon: "terminal", selected: state.contentMode == "terminal") { state.page = "conversation"; state.contentMode = "terminal" }
             IconButton(title: "Files", icon: "folder", selected: state.contentMode == "files") { state.page = "conversation"; state.contentMode = "files" }

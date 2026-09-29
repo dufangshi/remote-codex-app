@@ -104,7 +104,10 @@ struct ImportSessionView: View {
             Picker("Backend", selection: $provider) { ForEach(backends, id: \.provider) { Text($0.displayName).tag($0.provider) } }
             if provider == "acp" { Picker("Agent", selection: $agent) { ForEach(agents) { Text($0.displayName).tag($0.id) } } }
             TextField("Search title, ID, or workspace", text: $search).textFieldStyle(.roundedBorder)
-            ScrollView { VStack(spacing: 4) { ForEach(candidates.filter { search.isEmpty || ($0.title + $0.sessionId + ($0.cwd ?? "")).localizedCaseInsensitiveContains(search) }) { entry in
+            ScrollView { VStack(spacing: 4) {
+                let filtered = candidates.filter { search.isEmpty || ($0.title + $0.sessionId + ($0.cwd ?? "")).localizedCaseInsensitiveContains(search) }
+                if filtered.isEmpty { Text("No sessions found").foregroundStyle(Palette.muted).padding(24) }
+                ForEach(filtered) { entry in
                 Button { session = entry.sessionId } label: { VStack(alignment: .leading) { Text(entry.title); Text(entry.cwd ?? entry.sessionId).font(.caption).foregroundStyle(Palette.muted) }.frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(MenuRowStyle(selected: entry.sessionId == session))
             } } }.frame(height: 240)
             TextField("Session ID", text: $session).textFieldStyle(.roundedBorder)

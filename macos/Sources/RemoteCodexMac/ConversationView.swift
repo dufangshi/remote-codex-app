@@ -63,7 +63,7 @@ struct ConversationView: View {
                 if state.threadID != nil { Button("Retry") { Task { await state.refreshThread() } }.padding() }
             }
         }.background(Palette.background).frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onExitCommand { slashOpen = false; state.showingThreadSettings = false }
+            .onExitCommand { slashOpen = false; state.showingThreadSettings = false; state.showingSearch = false }
             .onChange(of: state.showingSettings) { _, open in
                 if open { slashOpen = false; state.showingThreadSettings = false }
             }
@@ -96,7 +96,7 @@ struct ConversationView: View {
                     SlashToolIcon().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)).frame(width: 14, height: 14)
                         .frame(width: 32, height: 32).contentShape(Circle())
                 }.buttonStyle(.plain).foregroundStyle(Palette.muted).accessibilityLabel("Open slash toolbox")
-                IconButton(title: "Attach images", icon: "plus") { state.addImages() }
+                IconButton(title: "Attach images", icon: "paperclip") { state.addImages() }
                 Spacer(minLength: 4)
                 Button { slashOpen = false; if state.showingThreadSettings { state.showingThreadSettings = false } else { Task { await state.prepareThreadSettings() } } } label: {
                     HStack(spacing: 5) {
@@ -240,6 +240,7 @@ struct MessageView: View {
     @EnvironmentObject var state: AppState
     let item: HistoryItem
     let threadID: String
+    @State private var hovered = false
     private var isUser: Bool { ["userMessage", "user"].contains(item.kind) }
     private var message: Bool { ["userMessage", "user", "agentMessage", "assistantMessage", "assistant", "reasoning"].contains(item.kind) }
     var body: some View {
@@ -255,6 +256,15 @@ struct MessageView: View {
             }.padding(isUser ? 16 : 0)
                 .frame(maxWidth: isUser ? 620 : .infinity, alignment: .leading)
                 .background(isUser ? Palette.surface : .clear, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(alignment: .topTrailing) {
+                    if hovered {
+                        Button { copy(item.text) } label: { Image(systemName: "doc.on.doc") }
+                            .buttonStyle(.plain).foregroundStyle(Palette.muted).padding(6)
+                            .background(Palette.surface, in: RoundedRectangle(cornerRadius: 6))
+                            .padding(6).help("Copy message").accessibilityLabel("Copy message")
+                    }
+                }
+                .onHover { hovered = $0 }
                 .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
                 .contextMenu { Button("Copy message") { copy(item.text) } }
         } else if item.kind == "image", let path = item.assetPath ?? item.detailText {
@@ -379,8 +389,8 @@ private struct NativeRequestView: View {
             ForEach(request.questions ?? []) { question in
                 Text(question.question).font(.callout)
                 let value = Binding(get: { (answers[question.id] ?? []).joined(separator: ", ") }, set: { answers[question.id] = [$0] })
-                if question.isSecret { SecureField("Answer", text: value).textFieldStyle(.roundedBorder) }
-                else { TextField("Answer", text: value).textFieldStyle(.roundedBorder) }
+                if question.isSecret { SecureField("Answer", text: value).textFieldStyle(.roundedBorder).accessibilityLabel(question.question) }
+                else { TextField("Answer", text: value).textFieldStyle(.roundedBorder).accessibilityLabel(question.question) }
                 if let options = question.options {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(options, id: \.label) { option in
