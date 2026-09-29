@@ -1,0 +1,215 @@
+import SwiftUI
+import RemoteCodexCore
+
+struct NativeWorkbench: View {
+    @EnvironmentObject var state: AppState
+    @State private var renaming: ThreadSummary?
+    @State private var deleting: ThreadSummary?
+    @State private var title = ""
+    @State private var notifications = false
+    @State private var shortcutsExpanded = true
+    @State private var recentExpanded = true
+    var body: some View {
+        HStack(spacing: 0) {
+            activityRail
+            VStack(spacing: 0) {
+                topbar
+                HStack(spacing: 0) {
+                    if state.showingSidebar { sidebar.frame(width: 236); Divider().overlay(Palette.border) }
+                    VStack(spacing: 0) {
+                        tabs
+                        if let error = state.error { InlineError(message: error) { state.error = nil } }
+                        if state.contentMode == "files", let files = state.fileWorkspace {
+                            FilesView(files: files).id(files.api.deviceID + files.api.workspaceID)
+                        } else if state.contentMode == "terminal" { NativeTerminalView().id(state.deviceID ?? "") }
+                        else { ConversationView().id(state.threadID) }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }.background(Palette.background)
+            .task(id: state.deviceID) { await state.loadDevice() }
+            .task(id: state.threadID) { await state.loadThread(); await state.poll() }
+            .onChange(of: state.workspaceID) { _, _ in
+                state.selectWorkspace()
+                if !state.visibleThreads.contains(where: { $0.id == state.threadID }) { state.threadID = state.visibleThreads.first?.id }
+            }
+            .sheet(isPresented: $state.showingNewThread) { NewThreadView() }
+            .sheet(isPresented: $state.showingNewWorkspace) { NewWorkspaceView() }
+            .sheet(isPresented: $state.showingThreadSettings) { ThreadSettingsView() }
+            .sheet(isPresented: $state.showingSettings) { NativeSettingsView() }
+            .sheet(item: $renaming) { thread in
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Rename thread").font(.title2.bold())
+                    TextField("Title", text: $title).textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button("Cancel") { renaming = nil }.keyboardShortcut(.cancelAction)
+                        Spacer()
+                        Button("Rename") { Task { await state.renameThread(thread, title: title); renaming = nil } }.keyboardShortcut(.defaultAction)
+                    }
+                }.padding(28).frame(width: 420).background(Palette.panel)
+            }
+            .confirmationDialog("Delete this thread?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+                Button("Delete Thread", role: .destructive) { if let thread = deleting { Task { await state.deleteThread(thread) } }; deleting = nil }
+                Button("Cancel", role: .cancel) { deleting = nil }
+            } message: { Text("This permanently removes the conversation. It cannot be undone.") }
+    }
+    private var activityRail: some View {
+        VStack(spacing: 18) {
+            Text("rc").font(.system(size: 25, weight: .bold, design: .rounded)).foregroundStyle(Palette.accent).padding(.top, 12).padding(.bottom, 10)
+            IconButton(title: "Chat", icon: "bubble.left", selected: state.contentMode == "chat") { state.contentMode = "chat" }
+            IconButton(title: "Terminal", icon: "terminal", selected: state.contentMode == "terminal") { state.contentMode = "terminal" }
+            IconButton(title: "Files", icon: "folder", selected: state.contentMode == "files") { state.contentMode = "files" }
+            Spacer()
+            IconButton(title: "Settings", icon: "gearshape") { state.showingSettings = true }
+        }.padding(.bottom, 12).frame(width: 50).background(Palette.chrome)
+            .overlay(alignment: .trailing) { Palette.border.frame(width: 1) }
+    }
+    private var topbar: some View {
+        HStack(spacing: 12) {
+            IconButton(title: "Toggle sidebar", icon: "sidebar.left") { state.showingSidebar.toggle() }
+            Text("Remote Codex").font(.system(size: 16, weight: .semibold))
+            Rectangle().fill(Palette.border).frame(width: 1, height: 22).padding(.horizontal, 6)
+            Menu {
+                ForEach(state.devices) { device in
+                    Button { state.deviceID = device.id } label: { Label(device.name, systemImage: device.connected == true ? "desktopcomputer" : "desktopcomputer.trianglebadge.exclamationmark") }
+                }
+                Divider()
+                Button("Refresh Devices") { Task { await state.refreshPortal() } }
+            } label: { Label(state.deviceName, systemImage: "desktopcomputer").lineLimit(1) }.menuStyle(.borderlessButton).fixedSize()
+            Button { state.showingSearch.toggle() } label: {
+                Label("Search conversation", systemImage: "magnifyingglass").foregroundStyle(Palette.muted)
+            }.buttonStyle(.plain).padding(.leading, 12)
+            Spacer()
+            IconButton(title: "Notifications", icon: "bell") { notifications.toggle(); Task { await state.refreshNavigation() } }
+                .popover(isPresented: $notifications) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Notifications").font(.headline)
+                        Text("Latest 10 events").font(.caption).foregroundStyle(Palette.muted)
+                        ForEach(Array((state.navigation?.notifications ?? []).prefix(10))) { event in
+                            Button { state.openNotification(event); notifications = false } label: {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(event.title).font(.callout)
+                                    Text(event.occurredAt).font(.caption).foregroundStyle(Palette.muted)
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                            }.buttonStyle(.plain)
+                        }
+                        if state.navigation?.notifications.isEmpty != false { Text("You're all caught up.").foregroundStyle(Palette.muted) }
+                    }.padding(20).frame(width: 340)
+                }
+        }.padding(.horizontal, 12).frame(height: 48).background(Palette.chrome)
+            .overlay(alignment: .bottom) { Palette.border.frame(height: 1) }
+    }
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Workspace").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                IconButton(title: "Add workspace", icon: "folder.badge.plus") { state.showingNewWorkspace = true }
+            }
+            Picker("Workspace", selection: $state.workspaceID) {
+                Text("Choose workspace").tag(String?.none)
+                ForEach(state.workspaces) { Text($0.label).tag(Optional($0.id)) }
+            }.labelsHidden()
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
+                TextField("Find a chat", text: $state.query).textFieldStyle(.plain)
+            }.padding(8).background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
+            if state.deviceLoading { ProgressView().controlSize(.small) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeading("Shortcuts", expanded: $shortcutsExpanded, count: nil)
+                    if shortcutsExpanded {
+                        ForEach((state.navigation?.threads ?? []).filter(\.favorite)) { referenceRow($0) }
+                        if !(state.navigation?.threads ?? []).contains(where: \.favorite) {
+                            Text("Pin a chat from its menu.").font(.caption).foregroundStyle(Palette.muted).padding(10)
+                        }
+                    }
+                    sectionHeading("Recent chats", expanded: $recentExpanded, count: min(20, state.navigation?.threads.count ?? state.visibleThreads.count)).padding(.top, 18)
+                    if recentExpanded {
+                        if let references = state.navigation?.threads, !references.isEmpty {
+                            ForEach(references.filter { state.query.isEmpty || $0.title.localizedCaseInsensitiveContains(state.query) }.prefix(20)) { reference in
+                                referenceRow(reference)
+                            }
+                        } else { ForEach(state.visibleThreads) { threadRow($0) } }
+                    }
+                }
+            }.scrollIndicators(.never)
+            Text("Your conversations, together.").font(.caption).foregroundStyle(Palette.muted).padding(.vertical, 8)
+        }.padding(.horizontal, 12).padding(.top, 14).background(Palette.chrome)
+    }
+    private func sectionHeading(_ name: String, expanded: Binding<Bool>, count: Int?) -> some View {
+        Button { expanded.wrappedValue.toggle() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: expanded.wrappedValue ? "chevron.down" : "chevron.right").font(.caption)
+                Text(name); Spacer(); if let count { Text("\(count)") }
+            }.foregroundStyle(Palette.muted).padding(8)
+        }.buttonStyle(.plain)
+    }
+    private func referenceRow(_ reference: ThreadReference) -> some View {
+        Button { state.selectReference(reference.deviceId, reference.threadId) } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(reference.title).font(.system(size: 14)).lineLimit(1)
+                Text(reference.deviceName + " · " + reference.workspaceLabel).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1)
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(state.deviceID == reference.deviceId && state.threadID == reference.threadId ? Palette.selected : .clear, in: RoundedRectangle(cornerRadius: 9))
+        }.buttonStyle(.plain).contextMenu {
+            Button(reference.favorite ? "Unpin" : "Pin to Shortcuts") { Task { await state.setFavorite(reference, favorite: !reference.favorite) } }
+        }
+    }
+    private func threadRow(_ thread: ThreadSummary) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                state.threadID = thread.id; state.contentMode = "chat"
+            } label: {
+                HStack(spacing: 9) {
+                    Circle().stroke(thread.activeTurnId == nil ? Palette.muted : Palette.accent, lineWidth: 1.5).frame(width: 6, height: 6)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(thread.title.isEmpty ? "Untitled" : thread.title).font(.system(size: 14)).lineLimit(1)
+                        Text(state.deviceName + " · " + (state.workspaces.first { $0.id == thread.workspaceId }?.label ?? "Workspace"))
+                            .font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(.vertical, 12).padding(.leading, 10).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            Menu {
+                Button(state.pinnedThreads.contains(thread.id) ? "Unpin" : "Pin to Shortcuts") { state.togglePin(thread.id) }
+                Button("Rename…") { title = thread.title; renaming = thread }
+                Button("Delete…", role: .destructive) { deleting = thread }.disabled(thread.activeTurnId != nil)
+            } label: { Image(systemName: "ellipsis").frame(width: 22, height: 28) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().padding(.trailing, 6).accessibilityLabel("Actions for " + thread.title)
+        }.background(state.threadID == thread.id ? Palette.selected : .clear, in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(state.threadID == thread.id ? Palette.muted.opacity(0.45) : .clear))
+    }
+    private var tabs: some View {
+        HStack(spacing: 0) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 0) {
+                    ForEach(state.visibleThreads) { thread in
+                        Button { state.threadID = thread.id; state.contentMode = "chat" } label: {
+                            HStack(spacing: 8) {
+                                Circle().stroke(thread.activeTurnId == nil ? Palette.muted : Palette.accent, lineWidth: 1.5).frame(width: 6, height: 6)
+                                Text(thread.title.isEmpty ? "Untitled" : thread.title).lineLimit(1)
+                            }.padding(.horizontal, 16).frame(height: 42).frame(maxWidth: 190)
+                                .background(state.threadID == thread.id ? Palette.background : .clear)
+                                .overlay(alignment: .bottom) { if state.threadID == thread.id { Palette.accent.frame(height: 2) } }
+                                .overlay(alignment: .trailing) { Palette.border.frame(width: 1) }
+                        }.buttonStyle(.plain)
+                    }
+                    IconButton(title: "New Chat", icon: "plus") { Task { await state.prepareNewThread() } }.disabled(state.workspaceID == nil)
+                }
+            }.scrollIndicators(.never)
+            Menu {
+                Button("Model and reasoning…") { Task { await state.prepareThreadSettings() } }
+                Button("Export latest 100 turns…") { Task { await state.exportTranscript() } }
+                if let thread = state.detail?.thread {
+                    Button("Pin / Unpin") {
+                        let favorite = state.navigation?.threads.first { $0.deviceId == state.deviceID && $0.threadId == thread.id }?.favorite ?? false
+                        Task { await state.recordVisit(favorite: !favorite) }
+                    }
+                    Button("Rename…") { title = thread.title; renaming = thread }
+                    Button("Delete…", role: .destructive) { deleting = thread }.disabled(state.active)
+                }
+            } label: { Image(systemName: "slider.horizontal.3").frame(width: 40, height: 40) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Thread tools").disabled(state.threadID == nil)
+        }.frame(height: 42).background(Palette.chrome).overlay(alignment: .bottom) { Palette.border.frame(height: 1) }
+    }
+}

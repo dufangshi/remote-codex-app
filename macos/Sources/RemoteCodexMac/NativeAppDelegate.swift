@@ -3,9 +3,8 @@ import AppKit
 @MainActor
 final class NativeAppDelegate: NSObject, NSApplicationDelegate {
     weak var state: AppState?
-    weak var browser: WorkspaceBrowser?
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard state?.hasUnsavedFiles == true || browser?.web != nil else { return .terminateNow }
+        guard state?.hasUnsavedFiles == true || state?.hasDrafts == true else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "Quit Remote Codex?"
         alert.informativeText = "Save any edited files and drafts before quitting. Sent conversations remain on your device, and running agents continue in the background."

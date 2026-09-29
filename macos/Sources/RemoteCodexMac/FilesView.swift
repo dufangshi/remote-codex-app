@@ -44,7 +44,7 @@ struct FilesView: View {
                             HStack(spacing: 4) {
                                 ForEach(files.documents) { document in FileTab(document: document, files: files) }
                             }.padding(8)
-                        }.scrollIndicators(.hidden)
+                        }.scrollIndicators(.never)
                         Divider()
                     }
                     if let document = files.document {

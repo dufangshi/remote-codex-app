@@ -206,7 +206,8 @@ public final class RelayClient {
         guard UUID(uuidString: device) != nil, path.hasPrefix("/api/"),
               let route = URLComponents(string: path), route.scheme == nil, route.host == nil, route.fragment == nil,
               !route.path.split(separator: "/").contains("..") else { throw APIError("Invalid device route.") }
-        var (metadata, data) = try await exchange(device, path, method: method, body: body, contentType: contentType)
+        let first = try await exchange(device, path, method: method, body: body, contentType: contentType)
+        var metadata = first.0, data = first.1
         var continuation = Continuation(path: path)
         while let next = metadata["streamNext"] as? String {
             try Task.checkCancellation()
@@ -218,7 +219,7 @@ public final class RelayClient {
         return data
     }
     private func exchange(_ device: String, _ path: String, method: String, body: Data, contentType: String,
-                          retry: Bool = true) async throws -> ([String: Any], Data) {
+                          retry: Bool = true) async throws -> ([String: Any], Data, SymmetricKey, SymmetricKey) {
         let (descriptor, offset) = try await key(device)
         let components = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
         let wire = String(components[0])
@@ -258,6 +259,22 @@ public final class RelayClient {
         let packet = try Packet.unpack(opened)
         guard let status = packet.metadata["status"] as? Int else { throw APIError("Missing encrypted response status.") }
         try check(status, packet.body)
-        return (packet.metadata, packet.body)
+        return (packet.metadata, packet.body,
+                try sender.exportSecret(context: Data("remote-codex/ws-client/v1".utf8), outputByteCount: 32),
+                try sender.exportSecret(context: Data("remote-codex/ws-server/v1".utf8), outputByteCount: 32))
+    }
+    public func socket(device: String, thread: String) async throws -> DeviceSocket {
+        guard UUID(uuidString: device) != nil, UUID(uuidString: thread) != nil else { throw APIError("Invalid socket scope.") }
+        let result = try await exchange(device, "/api/threads/\(thread)/transport/session", method: "POST", body: Data("{}".utf8), contentType: "application/json")
+        guard let json = try JSONSerialization.jsonObject(with: result.1) as? [String: Any],
+              let channel = json["channelId"] as? String else { throw APIError("Missing encrypted channel.") }
+        var components = URLComponents(url: origin, resolvingAgainstBaseURL: false)!
+        components.scheme = origin.scheme == "https" ? "wss" : "ws"
+        components.path = "/relay/devices/\(device)/ws"
+        components.queryItems = [URLQueryItem(name: "threadId", value: thread), URLQueryItem(name: "channelId", value: channel)]
+        var req = URLRequest(url: components.url!)
+        if let token { req.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+        req.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
+        return DeviceSocket(task: session.webSocketTask(with: req), cipher: SocketCipher(channel: channel, send: result.2, receive: result.3))
     }
 }

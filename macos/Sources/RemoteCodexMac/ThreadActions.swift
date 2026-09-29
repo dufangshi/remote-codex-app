@@ -1,7 +1,79 @@
+import AppKit
 import Foundation
 import RemoteCodexCore
 
 extension AppState {
+    func refreshNavigation() async {
+        guard let api = client else { return }
+        do {
+            let value: WorkbenchSnapshot = try await api.relay("/relay/account/workbench")
+            if client === api { navigation = value }
+        } catch { /* A navigation failure must not prevent encrypted conversations. */ }
+    }
+    func setFavorite(_ reference: ThreadReference, favorite: Bool) async {
+        guard let api = client else { return }
+        var body: [String: Any] = ["deviceId": reference.deviceId, "threadId": reference.threadId,
+            "title": reference.title, "workspaceLabel": reference.workspaceLabel, "favorite": favorite]
+        if let workspace = reference.workspaceId { body["workspaceId"] = workspace }
+        await perform {
+            let result: WorkbenchSnapshot = try await api.relay("/relay/account/workbench", method: "POST", body: body)
+            if client === api { navigation = result }
+        }
+    }
+    func recordVisit(favorite: Bool? = nil) async {
+        guard let api = client, let device = deviceID, let thread = detail?.thread, thread.id == threadID else { return }
+        var body: [String: Any] = ["deviceId": device, "threadId": thread.id, "title": thread.title,
+            "workspaceId": thread.workspaceId, "workspaceLabel": workspaces.first { $0.id == thread.workspaceId }?.label ?? "Workspace"]
+        if let favorite { body["favorite"] = favorite }
+        await perform {
+            let snapshot: WorkbenchSnapshot = try await api.relay("/relay/account/workbench", method: "POST", body: body)
+            if client === api { navigation = snapshot }
+        }
+    }
+    func selectReference(_ device: String, _ thread: String) {
+        guard UUID(uuidString: device) != nil, UUID(uuidString: thread) != nil else { return }
+        if device == deviceID {
+            if let row = threads.first(where: { $0.id == thread }) { workspaceID = row.workspaceId }
+            threadID = thread; contentMode = "chat"
+        } else {
+            UserDefaults.standard.set(thread, forKey: "native-thread:" + relay + "/" + device)
+            deviceID = device
+        }
+    }
+    func openNotification(_ notification: WorkbenchNotification) {
+        guard let origin = try? RelayClient.normalizedOrigin(relay),
+              let url = URL(string: notification.href, relativeTo: origin)?.absoluteURL,
+              BrowserPolicy.sameOrigin(url, origin) else { error = "Invalid notification destination."; return }
+        let parts = url.path.split(separator: "/")
+        guard parts.count == 4, parts[0] == "devices", parts[2] == "threads" else { error = "Unknown notification destination."; return }
+        selectReference(String(parts[1]), String(parts[3]))
+    }
+    func exportTranscript() async {
+        guard let api = client, let device = deviceID, let thread = threadID else { return }
+        await perform {
+            let bytes = try await api.deviceData(device, "/api/threads/\(thread)/exports/html?limit=100")
+            let panel = NSSavePanel(); panel.nameFieldStringValue = "remote-codex-transcript.html"
+            if panel.runModal() == .OK, let url = panel.url { try bytes.write(to: url, options: .atomic) }
+        }
+    }
+    func fork(turn: String) async {
+        guard !busy, let api = client, let device = deviceID, let thread = threadID else { return }
+        busy = true; defer { busy = false }
+        await perform {
+            struct Result: Decodable { let thread: ThreadDetail }
+            let result: Result = try await api.device(device, "/api/threads/\(thread)/fork", method: "POST", body: ["mode": "turn", "turnId": turn])
+            guard device == deviceID else { return }
+            threads.insert(result.thread.thread, at: 0); threadID = result.thread.thread.id
+        }
+    }
+    func respond(_ request: ActionRequest, answers: [String: [String]]) async {
+        guard let api = client, let device = deviceID, let thread = threadID else { return }
+        await perform {
+            let body = ["answers": answers.mapValues { ["answers": $0] }]
+            _ = try await api.deviceData(device, "/api/threads/\(thread)/requests/\(request.id)/respond", method: "POST", body: JSONSerialization.data(withJSONObject: body))
+            await refreshThread()
+        }
+    }
     func mergeHistory(_ fresh: [Turn], prepend: Bool = false) {
         let freshIDs = Set(fresh.map(\.id))
         if prepend { history = fresh + history.filter { !freshIDs.contains($0.id) }; return }
@@ -43,16 +115,6 @@ extension AppState {
             if !newSpaces.contains(where: { $0.id == workspaceID }) { workspaceID = newSpaces.first?.id }
             if !newRows.contains(where: { $0.id == threadID }) { threadID = nil }
         }
-    }
-    func openFullWorkspace() {
-        guard let client else { return }
-        let route: String
-        if let device = deviceID, let thread = threadID { route = "/devices/\(device)/threads/\(thread)" }
-        else if let device = deviceID { route = "/devices/\(device)/workspaces" }
-        else { route = "/relay-devices" }
-        webCookies = client.browserCookies()
-        webURL = URL(string: client.origin.absoluteString + route)
-        contentMode = "web"
     }
     func renameThread(_ thread: ThreadSummary, title: String) async {
         guard let api = client, let device = deviceID, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }

@@ -58,12 +58,33 @@ public struct Turn: Decodable, Identifiable {
     public let model: String?
     public let reasoningEffort: String?
     public let items: [HistoryItem]
+    public let startedAt: String?
+    public let completedAt: String?
+    public let tokenUsage: TokenUsage?
+    public let priceEstimate: PriceEstimate?
 }
+public struct TokenUsage: Decodable { public let total: TokenBreakdown }
+public struct TokenBreakdown: Decodable {
+    public let totalTokens: Int
+    public let inputTokens: Int
+    public let cachedInputTokens: Int
+    public let outputTokens: Int
+}
+public struct PriceEstimate: Decodable { public let totalUsd: Double }
+public struct ActionQuestion: Decodable, Identifiable {
+    public let id: String
+    public let question: String
+    public let isSecret: Bool
+    public let multiSelect: Bool?
+    public let options: [QuestionOption]?
+}
+public struct QuestionOption: Decodable { public let label: String; public let description: String }
 public struct ActionRequest: Decodable, Identifiable {
     public let id: String
     public let kind: String
     public let title: String
     public let description: String?
+    public let questions: [ActionQuestion]?
 }
 public struct ThreadDetail: Decodable {
     public let thread: ThreadSummary
@@ -107,4 +128,24 @@ public struct APIError: LocalizedError {
     public let message: String
     public var errorDescription: String? { message }
     public init(_ message: String) { self.message = message }
+}
+public struct WorkbenchSnapshot: Decodable {
+    public let threads: [ThreadReference]
+    public let notifications: [WorkbenchNotification]
+}
+public struct ThreadReference: Decodable, Identifiable {
+    public let deviceId: String
+    public let threadId: String
+    public let title: String
+    public let workspaceLabel: String
+    public let workspaceId: String?
+    public let deviceName: String
+    public let favorite: Bool
+    public var id: String { deviceId + "/" + threadId }
+}
+public struct WorkbenchNotification: Decodable, Identifiable {
+    public let id: String
+    public let title: String
+    public let href: String
+    public let occurredAt: String
 }

@@ -59,8 +59,13 @@ final class AppState: ObservableObject {
     @Published var history: [Turn] = []
     @Published var historyExhausted = false
     @Published var fileWorkspace: WorkspaceFiles?
-    @Published var webURL: URL?
-    @Published var webCookies: [HTTPCookie] = []
+    @Published var showingSidebar = true
+    @Published var showingSettings = false
+    @Published var showingSearch = false
+    @Published var conversationQuery = ""
+    @Published var deviceLoading = false
+    @Published var navigation: WorkbenchSnapshot?
+    @Published var pinnedThreads = Set(UserDefaults.standard.stringArray(forKey: "native-pinned-threads") ?? [])
     @Published var showingThreadSettings = false
     @Published var threadModels: [ModelOption] = []
     private(set) var client: RelayClient?
@@ -78,6 +83,11 @@ final class AppState: ObservableObject {
     var deviceName: String { devices.first { $0.id == deviceID }?.name ?? "Device" }
     var hasOlderHistory: Bool { !historyExhausted && (detail?.totalTurnCount ?? history.count) > history.count }
     var hasUnsavedFiles: Bool { fileSessions.values.contains { $0.hasUnsavedChanges } }
+    var hasDrafts: Bool { !draft.isEmpty || !images.isEmpty || drafts.values.contains { !$0.0.isEmpty || !$0.1.isEmpty } }
+    func togglePin(_ id: String) {
+        if pinnedThreads.contains(id) { pinnedThreads.remove(id) } else { pinnedThreads.insert(id) }
+        UserDefaults.standard.set(Array(pinnedThreads), forKey: "native-pinned-threads")
+    }
 
     func perform(_ work: () async throws -> Void) async {
         do { try await work() } catch is CancellationError { } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
@@ -109,7 +119,24 @@ final class AppState: ObservableObject {
         let portal: Portal = try await api.relay("/relay/portal")
         guard client === api else { return }
         devices = portal.allDevices; authenticated = true; challenge = false
-        if !devices.contains(where: { $0.id == deviceID }) { deviceID = devices.first?.id }
+        await refreshNavigation()
+        // One-time route migration from the 0.3 web workspace. Only public IDs.
+        let migration = "native-layout-v4:" + relay
+        if !UserDefaults.standard.bool(forKey: migration) {
+            if let path = UserDefaults.standard.string(forKey: "workspace-route:" + api.origin.absoluteString) {
+                let parts = path.split(separator: "/")
+                if parts.count == 4, parts[0] == "devices", parts[2] == "threads",
+                   UUID(uuidString: String(parts[1])) != nil, UUID(uuidString: String(parts[3])) != nil {
+                    UserDefaults.standard.set(String(parts[1]), forKey: "native-device:" + relay)
+                    UserDefaults.standard.set(String(parts[3]), forKey: "native-thread:" + relay + "/" + parts[1])
+                }
+            }
+            UserDefaults.standard.set(true, forKey: migration)
+        }
+        if !devices.contains(where: { $0.id == deviceID }) {
+            let saved = UserDefaults.standard.string(forKey: "native-device:" + relay)
+            deviceID = devices.first(where: { $0.id == saved })?.id ?? devices.first?.id
+        }
     }
     func refreshPortal() async { await perform { if let client { try await loadPortal(client) } } }
     func signOut() async {
@@ -119,27 +146,39 @@ final class AppState: ObservableObject {
         devices = []; deviceID = nil; workspaces = []; workspaceID = nil
         threads = []; threadID = nil; detail = nil; draft = ""; images = []; drafts = [:]; loadedThread = nil
         pendingSubmissions = [:]
-        fileSessions = [:]; fileWorkspace = nil; history = []; webURL = nil; webCookies = []
+        fileSessions = [:]; fileWorkspace = nil; history = []; navigation = nil
     }
     func loadDevice() async {
         workspaces = []; threads = []; workspaceID = nil; threadID = nil; detail = nil; error = nil; threadError = nil
-        webURL = nil; fileWorkspace = nil; contentMode = "chat"
+        fileWorkspace = nil; contentMode = "chat"
         guard let api = client, let device = deviceID else { return }
+        deviceLoading = true
+        defer { if device == deviceID { deviceLoading = false } }
         await perform {
             async let fetchedWorkspaces: [Workspace] = api.device(device, "/api/workspaces")
             async let fetchedThreads: [ThreadSummary] = api.device(device, "/api/threads")
             let (spaces, rows) = try await (fetchedWorkspaces, fetchedThreads)
             guard client === api, device == deviceID, !Task.isCancelled else { return }
-            workspaces = spaces; threads = rows; workspaceID = spaces.first?.id
+            workspaces = spaces; threads = rows
+            let saved = UserDefaults.standard.string(forKey: "native-thread:" + relay + "/" + device)
+            let selected = rows.first(where: { $0.id == saved }) ?? rows.first
+            workspaceID = selected?.workspaceId ?? spaces.first?.id
+            threadID = selected?.id
+            UserDefaults.standard.set(device, forKey: "native-device:" + relay)
+            selectWorkspace()
         }
     }
     func loadThread() async {
         if let previous = loadedThread { drafts[previous] = (draft, images) }
         loadedThread = threadID
+        if let device = deviceID, let thread = threadID {
+            UserDefaults.standard.set(thread, forKey: "native-thread:" + relay + "/" + device)
+        }
         let saved = threadID.flatMap { drafts[$0] }
         draft = saved?.0 ?? ""; images = saved?.1 ?? []; detail = nil; history = []; historyExhausted = false; threadError = nil
         if threadID != nil { contentMode = "chat" }
         await refreshThread()
+        await recordVisit()
     }
     func refreshThread() async {
         guard let api = client, let device = deviceID, let thread = threadID else { return }

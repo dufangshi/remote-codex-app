@@ -1,27 +1,35 @@
-# Mac / web parity audit — 0.3.0
+# Native Mac / web comparison — 0.4.0
 
-Compared the same production wsl → remoteCodex → 1 conversation in Chrome and the 0.2.0 app, then tested 0.3.0 against a loopback Rust 0.12.47 relay with the shared UI at `df80e5bc30a856a89668d3cbdf794e2343bfb854`. Screenshots were inspected through native UI automation; production transcripts were not checked into the repository.
+The 0.3 embedded web workspace has been removed. The 0.4 workspace, timeline, composer, editor and settings are SwiftUI views. A real loopback Rust 0.12.47 relay and the pinned web UI df80e5bc30a856a89668d3cbdf794e2343bfb854 provided the comparison fixture.
 
-| Area | 0.2.0 gap | 0.3.0 action / observed result |
-| --- | --- | --- |
-| Navigation | Extra device and thread columns consume the workspace | Uses web activity rail, shortcuts, recent chats and workspace tabs directly |
-| Theme and spacing | Gray native panels, blue controls, oversized composer | Uses the website's actual CSS and layout; window title bar follows theme |
-| Markdown | Tables rendered as plain pipe-delimited text | Same synthetic table, heading, bold/italic, inline code, Swift code block and list visible in both clients |
-| Timeline | Separate native item rendering and limited turn summaries | Uses shared timeline, tool grouping, usage and history implementation |
-| Composer | Missing slash/model/sandbox/attachment menus | High effort selected; Command-Return sent `mac-shared-chat-ok` and its reply appeared |
-| Attachments | Independent image pipeline | System picker selected AppIcon.png; composer attachment appeared, sent successfully, bounded conversation preview loaded |
-| Explorer/editor | Separate file screen and editor | In-app shared editor saved README.md; Chrome read back the same edited content |
-| Terminal | Advanced feature relegated to nested web fallback | Main workspace terminal attached; `printf` returned `mac-terminal-ok`; test shell exited |
-| Settings | Separate native settings and web settings | Command-comma opened the same tabbed Preferences UI; light screenshots compared; close returned to unobscured conversation |
-| New thread | Different native creation sheet | Command-N opened shared dialog and created `Mac UI created` |
-| Export | Incomplete native conversation export | Shared export generated HTML through native Save panel; output contained the expected test conversation |
-| Restart | Ephemeral web pins/preferences lost with the pane | Restart restored session, exact last thread and Light preference; no second login or changed-identity error |
-| Sign-out | Native and web sessions could diverge | Web Log out followed by app relaunch returned to native sign-in, without silently restoring the revoked session |
+Screenshots were visually inspected through native UI automation. They were not asserted pixel-identical: viewport sizes, window chrome, font metrics and native controls differ. No similarity percentage is claimed, and private production transcripts are not committed as screenshots.
 
-## Scope and caveats
+| Area | Native implementation and observed verification |
+| --- | --- |
+| Navigation | Web-shaped activity rail, compact sidebar and thread tabs; account recents and favorites read from the shared relay workbench |
+| Appearance | Web-aligned dark/light colors and green accent; no visible gray scrolling gutters; native Light preference survives relaunch |
+| Conversation | User bubbles on the right; assistant Markdown on the left; turn duration/model/effort below the reply |
+| Markdown | Same synthetic heading, inline formatting, code, list and table inspected in Chrome and the native app |
+| Activity | Tool details open in a popover instead of expanding the conversation layout |
+| Composer | Command-Return sent a synthetic prompt; partial and completed replies appeared; native model dialog applied High effort |
+| Images | System picker added the icon, composer showed the attachment, sending produced a bounded history image |
+| New chat | Command-N opened native creation controls and created an empty ready conversation |
+| Files | Native README edit/save showed Saved on device; protocol checks independently verify saved bytes and stale-write refusal |
+| Terminal | Native encrypted socket attached; printf output appeared; owned test shell exited |
+| Settings | Command-comma opened native tabs; Light theme, device inventory and harness inventory inspected; dismiss returned to conversation |
+| Export and navigation | Real encrypted HTML export and shared favorite/navigation round trip covered by integration test |
+| Restoration | Separate QA build restored login, theme and exact thread; production-named 0.4 restored the previous 0.3 ElAgente conversation with readable completed history |
 
-- Screenshots were visually compared, not asserted pixel-identical: viewport sizes, browser chrome, WebKit native checkboxes and font rasterization differ. No numeric similarity score is claimed.
-- Runtime/harness install, billing, sharing changes, destructive deletion and paid real-model inference were not executed as UI-parity tests. Their existing web controls are reused, not independently reimplemented.
-- Protocol tests cover encrypted history/file continuations, identity-change rejection, query boundaries and session persistence. Manual interface tests use a fake agent but a real relay, real encryption and real file/terminal services.
-- Production verification is read-only. Test edits/prompts/export are confined to the isolated fixture.
-- The app is an explicit native-shell/shared-web architecture, not a claim that React views have become native SwiftUI views.
+## Remaining differences
+
+- Command terminal output is bounded plain text with ANSI control removal, not a full terminal emulator. Full-screen TUI programs are explicitly marked unsupported.
+- Markdown is a native block parser with inline attributed text. Complex nested syntax, KaTeX/Mermaid, syntax highlighting and web-rendered scientific/plugins are not equivalent.
+- The plain-text editor has native selection/undo but not Monaco language services, rich document editing or a full web explorer layout.
+- Chat uses foreground polling (one second while running), not WebSocket event streaming. History search searches loaded turns.
+- Native prompt shortcuts are a small subset of the web command catalog. Advanced sharing, public-link administration, plugin management and some upstream configuration workflows are not present.
+- Password/MFA sign-in is supported; OAuth/passkey onboarding and OS notification delivery have not been qualified.
+- Settings mutations (runtime/harness installs, updates and real upstream changes) were not executed against the host as parity tests. Their presence is not evidence of end-to-end qualification for every harness.
+- Drafts are not durable across application quit; a warning protects in-memory work.
+- Apple Silicon/macOS 27.2 was tested; macOS 14 and Intel physical-device coverage remains outstanding.
+
+Production checks were read-only except normal account navigation recording. Prompts, file writes and terminal commands were confined to the isolated fixture. No active host Supervisor was restarted.

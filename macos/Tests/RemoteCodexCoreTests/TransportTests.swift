@@ -9,6 +9,32 @@ final class MemoryVault: SecretStore {
 }
 
 final class TransportTests: XCTestCase {
+    func testNativeMarkdownBlocks() {
+        let input = "# Title\n\nText **bold**.\n\n| Feature | State |\n| --- | :---: |\n| Chat | Ready |\n| Files | |\n\n~~~swift\nlet n = 1\n~~~\n\n- [x] tested\n> Quote\n---"
+        XCTAssertEqual(MarkdownParser.blocks(input), [.heading(1, "Title"), .paragraph("Text **bold**."),
+            .table(["Feature", "State"], [["Chat", "Ready"], ["Files", ""]]),
+            .code("swift", "let n = 1"), .list("☑", "tested"), .quote("Quote"), .rule])
+        XCTAssertEqual(MarkdownParser.cells("| escaped\\|pipe | \u{60}a|b\u{60} |"), ["escaped|pipe", "\u{60}a|b\u{60}"])
+        XCTAssertEqual(MarkdownParser.blocks("~~~txt\nstreaming code"), [.code("txt", "streaming code")])
+        XCTAssertEqual(MarkdownParser.blocks("a | b\nnot a separator"), [.paragraph("a | b\nnot a separator")])
+    }
+    func testSocketCipherRejectsReplayTamperAndPlaintext() throws {
+        let a = SymmetricKey(size: .bits256), b = SymmetricKey(size: .bits256)
+        var client = SocketCipher(channel: "one", send: a, receive: b)
+        var server = SocketCipher(channel: "one", send: b, receive: a)
+        let request: [String: Any] = ["type": "shell.input", "shellId": "shell", "data": "echo secure"]
+        let frame = try client.seal(request)
+        XCTAssertEqual(try server.open(frame)["data"] as? String, "echo secure")
+        XCTAssertThrowsError(try server.open(frame))
+        let response = try server.seal(["type": "shell.output", "shellId": "shell", "payload": ["data": "secure"]])
+        var changed = try JSONSerialization.jsonObject(with: response) as! [String: Any]
+        changed["shellId"] = "other"
+        XCTAssertThrowsError(try client.open(JSONSerialization.data(withJSONObject: changed)))
+        XCTAssertEqual(try client.open(response)["type"] as? String, "shell.output")
+        XCTAssertThrowsError(try client.open(Data(#"{"type":"shell.output","payload":{"data":"plaintext"}}"#.utf8)))
+        var wrong = SocketCipher(channel: "wrong", send: b, receive: a)
+        XCTAssertThrowsError(try wrong.open(try client.seal(request)))
+    }
     @MainActor func testBrowserSessionAndNativePinsStayInVault() async throws {
         let vault = MemoryVault()
         let origin = "https://relay.example.com"
@@ -197,6 +223,36 @@ final class TransportTests: XCTestCase {
         XCTAssertEqual(modelChanged.reasoningEffort, "high")
         let auto: ThreadSummary = try await client.device(fixture.deviceId, "/api/threads/\(created.id)/settings", method: "PATCH", body: ["reasoningEffort": "auto"])
         XCTAssertEqual(auto.reasoningEffort, "auto")
+        let navigation: WorkbenchSnapshot = try await client.relay("/relay/account/workbench", method: "POST", body: [
+            "deviceId": fixture.deviceId, "threadId": created.id, "title": created.title,
+            "workspaceId": fixture.workspaceId, "workspaceLabel": "mobile-ws", "favorite": true
+        ])
+        XCTAssertTrue(navigation.threads.contains { $0.threadId == created.id && $0.deviceId == fixture.deviceId && $0.favorite })
+        let export = try await client.deviceData(fixture.deviceId, "/api/threads/\(created.id)/exports/html?limit=100")
+        XCTAssertTrue(String(decoding: export, as: UTF8.self).contains("Native Mac transport regression"))
+        // A real encrypted WebSocket, not a mocked UI terminal.
+        struct ShellResponse: Decodable { let activeShellId: String }
+        let shell: ShellResponse = try await client.device(fixture.deviceId, "/api/threads/\(created.id)/shell", method: "POST", body: ["cols": 100, "rows": 32])
+        let socket = try await client.socket(device: fixture.deviceId, thread: created.id)
+        let deadline = Task { try await Task.sleep(for: .seconds(12)); socket.close() }
+        defer { deadline.cancel(); socket.close() }
+        try await socket.send(["type": "shell.attach", "shellId": shell.activeShellId, "cols": 100, "rows": 32])
+        var viewer: String?
+        for _ in 0..<20 {
+            let event = try await socket.receive()
+            if event["type"] as? String == "shell.connected" { viewer = (event["payload"] as? [String: Any])?["viewerId"] as? String; break }
+        }
+        let viewerID = try XCTUnwrap(viewer)
+        try await socket.send(["type": "shell.input", "shellId": shell.activeShellId, "viewerId": viewerID, "data": "printf '\\156\\141\\164\\151\\166\\145-socket-ok\\n'\n"])
+        var output = ""
+        while !output.contains("native-socket-ok") {
+            let event = try await socket.receive()
+            output += (event["payload"] as? [String: Any])?["data"] as? String ?? ""
+        }
+        XCTAssertTrue(output.contains("native-socket-ok"))
+        try await socket.send(["type": "shell.input", "shellId": shell.activeShellId, "viewerId": viewerID, "data": "exit\n"])
+        _ = try await client.deviceData(fixture.deviceId, "/api/shells/\(shell.activeShellId)/terminate", method: "POST", body: Data("{}".utf8))
+        socket.close(); deadline.cancel()
         let pin = "identity:\(client.origin.absoluteString):\(fixture.deviceId)"
         XCTAssertNotNil(vault.values[pin])
         vault.values[pin] = "changed-identity"
