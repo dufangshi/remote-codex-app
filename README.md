@@ -2,6 +2,8 @@
 
 Independent Android and iOS clients for [Remote Codex](https://github.com/dufangshi/remoteCodex) relay mode.
 
+The new [macOS native preview](macos/README.md) uses SwiftUI and AppKit for navigation, chat and composition, with CryptoKit-encrypted device transport. It is independent of the mobile clients described below.
+
 Both clients render the live relay product in a WebView, so devices, workspaces, workspace tabs, shortcuts, recent chats, thread search, Explorer, settings and the composer stay aligned with the website. Native code owns relay selection, safe areas/keyboard layout, attachment picking, saving/sharing exports and system notifications. There is no second native thread toolbar.
 
 ## Download
