@@ -4,9 +4,14 @@ import RemoteCodexCore
 struct FilesView: View {
     @EnvironmentObject var state: AppState
     @ObservedObject var files: WorkspaceFiles
+    /// Hides the browser chrome so a long document gets the whole pane. Local to the
+    /// Files view rather than a window-level fullscreen, so the rail and tabs stay
+    /// reachable and Escape returns without leaving the workspace.
+    @State private var readerExpanded = false
     private var crumbs: [WorkspacePath.Crumb] { (try? WorkspacePath.breadcrumbs(files.directory, rootLabel: files.label)) ?? [] }
     var body: some View {
         VStack(spacing: 0) {
+            if !readerExpanded {
             HStack(spacing: 12) {
                 Button { Task { await files.browse(try? WorkspacePath.parent(files.directory)) } } label: { Image(systemName: "arrow.up") }
                     .disabled(files.directory == ".").help("Parent folder").accessibilityLabel("Parent folder")
@@ -32,9 +37,11 @@ struct FilesView: View {
                 Button { files.showingCreate = true } label: { Label("New File", systemImage: "doc.badge.plus") }
                 Button { Task { await files.browse() } } label: { Image(systemName: "arrow.clockwise") }.help("Refresh directory")
             }.padding(16)
+            }
             if let error = files.error { InlineError(message: error) { files.error = nil } }
             Divider()
             HSplitView {
+                if !readerExpanded {
                 VStack(spacing: 0) {
                     HStack {
                         TextField("Filter files", text: $files.filter).textFieldStyle(.roundedBorder)
@@ -46,6 +53,7 @@ struct FilesView: View {
                         }
                     }.listStyle(.inset).scrollContentBackground(.hidden).background(Palette.chrome)
                 }.frame(minWidth: 180, idealWidth: 220, maxWidth: 300)
+                }
                 VStack(spacing: 0) {
                     if !files.documents.isEmpty {
                         ScrollView(.horizontal) {
@@ -56,7 +64,7 @@ struct FilesView: View {
                         Divider()
                     }
                     if let document = files.document {
-                        FileEditor(document: document, files: files).id(document.id)
+                        FileEditor(document: document, files: files, expanded: $readerExpanded).id(document.id)
                     } else {
                         ContentUnavailableView("Workspace files", systemImage: "doc.text.magnifyingglass", description: Text("Browse folders and open a file. Text files open in the native editor; changes stay in their tabs until saved."))
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -133,6 +141,7 @@ private struct FileEditor: View {
     var textSize = TextSizePreference()
     @ObservedObject var document: FileDocument
     @ObservedObject var files: WorkspaceFiles
+    @Binding var expanded: Bool
     @State private var confirmReload = false
     @State private var preview = true
     private var markdown: Bool { ["md", "markdown", "mdown"].contains((document.id as NSString).pathExtension.lowercased()) }
@@ -141,6 +150,10 @@ private struct FileEditor: View {
             HStack {
                 Text(document.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
                 Spacer()
+                Button { expanded.toggle() } label: {
+                    Image(systemName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                }.help(expanded ? "Exit full width (Esc)" : "Read full width")
+                    .accessibilityLabel(expanded ? "Exit full width" : "Read full width")
                 if markdown { Button(preview ? "Edit Markdown" : "Preview") { preview.toggle() } }
                 Button("Download…") { Task { await files.download(document.id) } }
                 if document.dirty { Button("Save draft as…") { files.export(document) } }
@@ -172,6 +185,7 @@ private struct FileEditor: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }.background(Palette.panel).buttonStyle(WorkbenchButton())
+            .onExitCommand { if expanded { expanded = false } }
             .confirmationDialog("Replace your draft with the remote file?", isPresented: $confirmReload) {
                 Button("Discard Draft and Reload", role: .destructive) { Task { await files.reload(document) } }
                 Button("Cancel", role: .cancel) { }
